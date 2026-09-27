@@ -14,7 +14,7 @@ os.makedirs(out_dir_master_directory,exist_ok = True)
 async def scrape_master_directory():
     intial_id = 12931
     second_id = 13585
-    file_path = os.path.abspath(os.path.join(out_dir_master_directory,f"master_directory.jsonl"))
+    file_path = os.path.abspath(os.path.join(out_dir_master_directory,f"master_directory_html.jsonl"))
     count = 0
     i = 0 
     try:
@@ -32,7 +32,7 @@ async def scrape_master_directory():
                     content = soup.find('tr', class_='tablecontent2')
                     for junk in content.find_all(["script", "style", "input"]):
                         junk.decompose()
-                    clean_text = content.get_text(separator="\n", strip=True).replace("\r", "")
+                    clean_text = str(content).replace("\r", "")
                     
                     clean_data = {"id": id, "title": title, "category": "NBFC", "url": url, "text": clean_text}
                     with open(file_path,"a",encoding = "utf-8") as f:
@@ -49,7 +49,7 @@ async def scrape_master_directory():
                     content = soup.find('tr', class_='tablecontent2')
                     for junk in content.find_all(["script", "style", "input"]):
                         junk.decompose()
-                    clean_text = content.get_text(separator="\n", strip=True).replace("\r", "")
+                    clean_text = str(content).replace("\r", "")
                     clean_data = {"id": id, "title": title, "category": "NBFC", "url": url, "text": clean_text}
                     
                     with open(file_path,"a",encoding = "utf-8") as f:

@@ -21,6 +21,11 @@ data/notifications_output/*
 !data/notifications_clean/.gitkeep
 !data/notifications_matched/.gitkeep
 !data/notifications_output/.gitkeep
+chroma_db/*
+chroma_db/chroma.sqlite3/*
+*.sqlite3
+*.bin
+*.pickle
 *.csv
 *.parquet
 

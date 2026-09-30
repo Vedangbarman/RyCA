@@ -17,10 +17,14 @@ data/notifications_matched/*
 data/master_directory/*
 data/notification_historical/*
 data/notifications_output/*
+data/benchmark/data*
+data/benchmark/results*
 !data/error_logs/.gitkeep
 !data/notifications_clean/.gitkeep
 !data/notifications_matched/.gitkeep
 !data/notifications_output/.gitkeep
+!data/benchmark/data/.gitkeep
+!data/benchmark/results/.gitkeep
 chroma_db/*
 chroma_db/chroma.sqlite3/*
 *.sqlite3

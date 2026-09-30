@@ -17,8 +17,8 @@ data/notifications_matched/*
 data/master_directory/*
 data/notification_historical/*
 data/notifications_output/*
-data/benchmark/data*
-data/benchmark/results*
+data/benchmark/data/*
+data/benchmark/results/*
 !data/error_logs/.gitkeep
 !data/notifications_clean/.gitkeep
 !data/notifications_matched/.gitkeep

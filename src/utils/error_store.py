@@ -19,7 +19,7 @@ def error_store(error_message,trace_back,time,error_count,error_file):
     errors_ds['Trace_back'] = trace_back
     errors_ds['Error Count'] = error_count
     errors_ds['Error_File'] = error_file
-    format_errors = "json"
+    format_errors = "jsonl"
     current_path_error_log = current_week_file(out_dir_error_logs,format_errors)
     data = json.dumps(errors_ds)
     with open (current_path_error_log, "a") as file:

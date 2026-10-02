@@ -15,7 +15,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_classic.retrievers import EnsembleRetriever
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from utils.find_reference import find_mds, load_titles, double_hop
-
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 load_dotenv()
 API_KEY = os.getenv('GEMINI')
 os.environ["GOOGLE_API_KEY"] = API_KEY
@@ -43,7 +43,8 @@ embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
 script_dir = os.path.dirname(os.path.realpath(__file__))
 in_dir_data = os.path.abspath(os.path.join(script_dir, "..", "chroma_db"))
 
-
+class ChatEvaluation(BaseModel):
+    answer : str
 
 def load_store(): # load chroma database
     return Chroma(
@@ -117,7 +118,7 @@ def invoke_ai():
                     if recorvered_mds:
                         double_hop_data = double_hop(combined_text,titles)
                         final = retrieved_data + double_hop_data
-                        context = "\n\n---\n\n".join([
+                        combined_text = "\n\n---\n\n".join([
                                 f"Document Title: {doc.metadata.get('doc_title', 'Unknown')}\nContent:\n{doc.page_content}"
                                 for doc in final])
                         
@@ -157,7 +158,7 @@ def invoke_ai():
                             {json.dumps(json_line,indent = 2 )}
                             
                             Retrieved_Data
-                            {context}
+                            {combined_text}
                             """
                             
                     evaluation : ComplianceEvaluation = structured_llm.invoke(promt)
@@ -171,6 +172,47 @@ def invoke_ai():
             
             except Exception as e:
                 error_store(error_message=str(e),trace_back = traceback.format_exc(),time = str(datetime.now(timezone.utc)),error_count="Null",error_file="ai_inference")
-        
+    
+SYSTEM_PROMPT = """You are a compliance assistant for RBI master directions.
+Answer using only the context below. If the context doesn't contain the answer, say so.
+
+Context:
+{context}"""
+
+def format_docs(docs):
+    return "\n\n---\n\n".join(
+        f"Document Title: {d.metadata.get('doc_title', 'Unknown')}\nContent:\n{d.page_content}"
+        for d in docs
+    )
+
+def chat_ai(max_turns=6):
+    llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", temperature=0)
+    hybrid = build_retriever()   # build once, outside the loop
+    history = []                 # HumanMessage / AIMessage objects
+
+    while True:
+        try:
+            question = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if not question:
+            continue
+        if question.lower() in ("exit", "quit"):
+            break
+
+        # retrieval query: last 2 user turns + current question
+        recent_user = [m.content for m in history if isinstance(m, HumanMessage)][-2:]
+        chunks = retrieve("\n".join(recent_user + [question]), hybrid)
+
+        messages = [SystemMessage(content=SYSTEM_PROMPT.format(context=format_docs(chunks)))]
+        messages += history[-2 * max_turns:]
+        messages.append(HumanMessage(content=question))
+
+        response = llm.invoke(messages)
+        answer = response.text   # str; .content may be a list of blocks
+        print(answer)
+
+        history.append(HumanMessage(content=question))
+        history.append(AIMessage(content=answer))
 if __name__ == "__main__":
-    invoke_ai()
+    chat_ai()

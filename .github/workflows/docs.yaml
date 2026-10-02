@@ -24,6 +24,6 @@ jobs:
       - name: Upload docs
         uses: actions/upload-pages-artifact@v3
         with:
-          path: docs/html
+          path: docs/generated/html
       - name: Deploy
         uses: actions/deploy-pages@v4

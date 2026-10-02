@@ -1,8 +1,7 @@
 import os
 import json
-import traceback
 import jsonlines
-import pandas as pd
+import traceback
 from typing import Optional
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
@@ -15,7 +14,7 @@ from langchain_community.retrievers import BM25Retriever
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_classic.retrievers import EnsembleRetriever
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
+from utils.find_reference import find_mds, load_titles, double_hop
 
 load_dotenv()
 API_KEY = os.getenv('GEMINI')
@@ -95,13 +94,13 @@ def invoke_ai():
             notifications.append(json.loads(line))
 
     in_dir_profile = os.path.abspath(os.path.join(script_dir,"..","profile.json"))
-    
+    path = os.path.join(script_dir, "..", "data", "master_directory", "master_directory.jsonl")
     with open(in_dir_profile, "r", encoding="utf-8") as file_profile:
         profile = json.load(file_profile)
         output_path = current_week_file(out_dir_output, format="jsonl")
         
         hybrid = build_retriever()
-        
+        titles = load_titles(path)
         for i, json_line in enumerate(notifications):
             
             try : 
@@ -112,8 +111,17 @@ def invoke_ai():
                     results = []
                 
                     retrieved_data = retrieve(json_line["clean_description"],hybrid) # retireve data 
+                    combined_text = "\n\n".join([doc.page_content for doc in retrieved_data])
+                    recorvered_mds = find_mds(combined_text,titles)
+                    
+                    if recorvered_mds:
+                        double_hop_data = double_hop(combined_text,titles)
+                        final = retrieved_data + double_hop_data
+                        context = "\n\n---\n\n".join([
+                                f"Document Title: {doc.metadata.get('doc_title', 'Unknown')}\nContent:\n{doc.page_content}"
+                                for doc in final])
+                        
    
-                    print(retrieved_data)
                     promt = f"""Evaluate compliance applicability. 
                             "title"(title of notification), "link" (link of notification), "pubdate" (as mentioned in data),
                             "is_applicable" (boolean),"is_master_direction_matching" (boolean),"reason"(if master directory doesn't match to the given data return reason if no master directory to match return none),
@@ -149,7 +157,7 @@ def invoke_ai():
                             {json.dumps(json_line,indent = 2 )}
                             
                             Retrieved_Data
-                            {retrieved_data}
+                            {context}
                             """
                             
                     evaluation : ComplianceEvaluation = structured_llm.invoke(promt)

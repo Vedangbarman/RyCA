@@ -48,6 +48,9 @@ notes/
 Thumbs.db
 desktop.ini
 
+# Doxygen & Graphviz output
+docs/generated/
+
 #specific file 
 /config copy.json
 /debug.txt

@@ -9,12 +9,12 @@ from utils.week_file_save import current_week_file
 
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
-out_dir_notifications = os.path.abspath(os.path.join(script_dir,"..","data","notifications"))
+out_dir_notifications = os.path.abspath(os.path.join(script_dir,"..","..","data","notifications"))
 
-out_dir_notifications_clean = os.path.abspath(os.path.join(script_dir,"..","data","notifications_clean"))
+out_dir_notifications_clean = os.path.abspath(os.path.join(script_dir,"..","..","data","notifications_clean"))
 os.makedirs(out_dir_notifications_clean,exist_ok = True)
 
-in_dir_config_file = os.path.abspath(os.path.join(script_dir,"..","config.json"))
+in_dir_config_file = os.path.abspath(os.path.join(script_dir,"..","..","config.json"))
 
 import pandas as pd
 from bs4 import BeautifulSoup

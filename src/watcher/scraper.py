@@ -15,13 +15,13 @@ from utils.week_file_save import current_week_file
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
 
-out_dir_notifications = os.path.abspath(os.path.join(script_dir,"..","data","notifications"))
+out_dir_notifications = os.path.abspath(os.path.join(script_dir,"..","..","data","notifications"))
 os.makedirs(out_dir_notifications,exist_ok = True)
 
-out_dir_error_logs = os.path.abspath(os.path.join(script_dir,"..","data","error_logs"))
+out_dir_error_logs = os.path.abspath(os.path.join(script_dir,"..","..","data","error_logs"))
 os.makedirs(out_dir_error_logs,exist_ok = True)
 
-in_dir_config_file = os.path.abspath(os.path.join(script_dir,"..","config.json"))
+in_dir_config_file = os.path.abspath(os.path.join(script_dir,"..","..","config.json"))
         
 def isFileEmpty(filename): 
     try:

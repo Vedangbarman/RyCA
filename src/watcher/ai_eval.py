@@ -13,7 +13,7 @@ debug = True
 
 if debug :
     script_dir = os.path.dirname(os.path.realpath(__file__))
-    out_dir_output = os.path.abspath(os.path.join(script_dir,"..","data","notifications_output","2026-09-21.json"))
+    out_dir_output = os.path.abspath(os.path.join(script_dir,"..","..","data","notifications_output","2026-09-21.json"))
     df_results = pd.read_json(out_dir_output, lines=True)
     
 def check_json(df_results):

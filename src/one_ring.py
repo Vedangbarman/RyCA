@@ -2,9 +2,9 @@ import os
 import json
 import time
 import traceback
-from match_data import match_data
-from clean_data import clean_data
-from scraper import rbi_webscraper
+from watcher.match_data import match_data
+from watcher.clean_data import clean_data
+from watcher.scraper import rbi_webscraper
 from ai_inference import invoke_ai
 from datetime import datetime, timezone
 from utils.error_store import error_store

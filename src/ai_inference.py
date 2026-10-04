@@ -189,7 +189,8 @@ def chat_ai(max_turns=6):
     llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", temperature=0)
     hybrid = build_retriever()   # build once, outside the loop
     history = []                 # HumanMessage / AIMessage objects
-
+    path = os.path.join(script_dir, "..", "data", "master_directory", "master_directory.jsonl")
+    titles = load_titles(path) # load titles 
     while True:
         try:
             question = input("> ").strip()
@@ -200,11 +201,21 @@ def chat_ai(max_turns=6):
         if question.lower() in ("exit", "quit"):
             break
 
-        # retrieval query: last 2 user turns + current question
+        # retrieval query: last 2 user turns + current question + double hop data 
+        
         recent_user = [m.content for m in history if isinstance(m, HumanMessage)][-2:]
+        
         chunks = retrieve("\n".join(recent_user + [question]), hybrid)
-
-        messages = [SystemMessage(content=SYSTEM_PROMPT.format(context=format_docs(chunks)))]
+        chunks_text = "\n\n".join([doc.page_content for doc in chunks])
+        recorvered_mds = find_mds(chunks_text,titles)
+        
+        if recorvered_mds:
+            double_hop_data = double_hop(chunks_text,titles)
+            final = chunks + double_hop_data
+            chunks_text = "\n\n---\n\n".join([f"Document Title: {doc.metadata.get('doc_title', 'Unknown')}\nContent:\n{doc.page_content}"for doc in final])
+            
+            
+        messages = [SystemMessage(content=SYSTEM_PROMPT.format(chunks_text))]
         messages += history[-2 * max_turns:]
         messages.append(HumanMessage(content=question))
 

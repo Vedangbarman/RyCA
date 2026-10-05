@@ -20,7 +20,7 @@ NBFC_PATTERN = re.compile(
     re.IGNORECASE
 )
 
-OTHER_ENTITY_PATTERN = re.compile(
+OTHER_ENTITY_PATTERN = re.compile( """ Regex patterns for non nbfc entities"""
     r"regional rural bank"
     r"|urban co-?operative bank"
     r"|rural co-?operative bank"

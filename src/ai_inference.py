@@ -16,12 +16,15 @@ from langchain_classic.retrievers import EnsembleRetriever
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from utils.find_reference import find_mds, load_titles, double_hop
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+
 load_dotenv()
 API_KEY = os.getenv('GEMINI')
 os.environ["GOOGLE_API_KEY"] = API_KEY
 
 
 class ComplianceEvaluation(BaseModel):
+    """ Confirm schema and datatype of model output
+    """
     title: str
     link: str
     pubdate : str = Field(description="The date string formatted exactly as 'ddd, DD MMM YYYY HH:MM:SS' (e.g. 'Mon, 21 Sep 2026 17:25:00')")
@@ -54,7 +57,9 @@ def load_store(): # load chroma database
         )
 
 
-def build_retriever(): # get raw documetns for bm25 and build retriever 2 functions because I am calling retrieve function inside loop so having this logic in there means wastage of compute
+def build_retriever(): 
+    """ get raw documetns for bm25 and build retriever functions 
+    because if I am calling retrieve function inside loop so having this logic in there means wastage of compute"""
     cos_store = load_store()
     data = cos_store.get()
     corpus = [
@@ -72,6 +77,8 @@ def retrieve(query, hybrid, k=4):
 
 
 def invoke_ai():
+    """ Match incoming notifications against rag database check for other master directory mention and if yes then retrieve 
+    relevant data from that particular document """
     script_dir = os.path.dirname(os.path.realpath(__file__))
     in_dir_config = os.path.abspath(os.path.join(script_dir,"..","config.json"))
 
@@ -186,6 +193,9 @@ def format_docs(docs):
     )
 
 def chat_ai(max_turns=6):
+    """Function to chat with AI takes user query like "What is meant by Upper Layer in NBFC" and then find the relevant chunk 
+    in rag database, it then checks the retrieved data for other master directory reference and then retrive the relevant 
+    from those specific documents"""
     llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", temperature=0)
     hybrid = build_retriever()   # build once, outside the loop
     history = []                 # HumanMessage / AIMessage objects

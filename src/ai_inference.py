@@ -1,4 +1,5 @@
 import os
+import glob
 import json
 import jsonlines
 import traceback
@@ -17,6 +18,7 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from utils.find_reference import find_mds, load_titles, double_hop
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
+from llm_queue import submit, NOTIFY
 load_dotenv()
 API_KEY = os.getenv('GEMINI')
 os.environ["GOOGLE_API_KEY"] = API_KEY
@@ -24,6 +26,9 @@ os.environ["GOOGLE_API_KEY"] = API_KEY
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
 path = os.path.join(script_dir, "..", "data", "master_directory", "master_directory.jsonl")
+out_dir_output = os.path.abspath(os.path.join(script_dir, "..", "data", "notifications_output"))
+_cache = {}
+
 
 class ComplianceEvaluation(BaseModel):
     """ Confirm schema and datatype of model output
@@ -44,13 +49,21 @@ class ComplianceEvaluation(BaseModel):
                     )
     effective_date: str = Field(description="The date string formatted exactly as 'ddd, DD MMM YYYY HH:MM:SS' (e.g. 'Mon, 21 Sep 2026 17:25:00')")
     
-embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+def get_embeddings():
+    return GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+
+def get_llm():
+    return ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", temperature=0)
+
+embeddings = get_embeddings()
 
 
 in_dir_data = os.path.abspath(os.path.join(script_dir, "..", "chroma_db"))
 
+
 class ChatEvaluation(BaseModel):
     answer : str
+
 
 def load_store(): # load chroma database
     return Chroma(
@@ -58,7 +71,6 @@ def load_store(): # load chroma database
             embedding_function=embeddings,
             persist_directory=in_dir_data,
         )
-
 
 
 def build_retriever(): 
@@ -78,22 +90,20 @@ def build_retriever():
 _hybrid, _titles = None, None
 
 def get_retriever():
-    global _hybrid, _titles
-    if _hybrid is None:
-        _hybrid = build_retriever()
-        _titles = load_titles(path)
-    return _hybrid, _titles
+    if "hybrid" not in _cache:
+        _cache["hybrid"] = build_retriever()
+        _cache["titles"] = load_titles(path)
+    return _cache["hybrid"], _cache["titles"]
 
 def retrieve(query, hybrid, k=4):
     return hybrid.invoke(query)[:k]
 
 
-def invoke_ai():
+def run_batch():
     """ Match incoming notifications against rag database check for other master directory mention and if yes then retrieve 
     relevant data from that particular document """
+    
     in_dir_config = os.path.abspath(os.path.join(script_dir,"..","config.json"))
-
-
     out_dir_output = os.path.abspath(os.path.join(script_dir,"..","data","notifications_output"))
     os.makedirs(out_dir_output,exist_ok = True)
 
@@ -122,7 +132,7 @@ def invoke_ai():
         for i, json_line in enumerate(notifications):
             
             try : 
-                    llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", temperature=0)
+                    llm = get_llm()
                     structured_llm = llm.with_structured_output(ComplianceEvaluation)
                 
                     results = []
@@ -188,7 +198,11 @@ def invoke_ai():
             
             except Exception as e:
                 error_store(error_message=str(e),trace_back = traceback.format_exc(),time = str(datetime.now(timezone.utc)),error_count="Null",error_file="ai_inference")
-    
+
+def invoke_ai():
+    submit(NOTIFY, run_batch).result()
+
+ 
 SYSTEM_PROMPT = """You are a compliance assistant for RBI master directions.
 Answer using only the context below. If the context doesn't contain the answer, say so.
 
@@ -200,39 +214,39 @@ def format_docs(docs):
         f"Document Title: {d.metadata.get('doc_title', 'Unknown')}\nContent:\n{d.page_content}"
         for d in docs
     )
-
-def chat_ai(question: str, history: list[dict]) -> str:
-    """Function to chat with AI takes user query like "What is meant by Upper Layer in NBFC" and then find the relevant chunk 
-    in rag database, it then checks the retrieved data for other master directory reference and then retrive the relevant 
-    from those specific documents"""
-    llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", temperature=0)
-    hybrid = build_retriever()   # build once, outside the loop
-    history = []                 # HumanMessage / AIMessage objects
-    path = os.path.join(script_dir, "..", "data", "master_directory", "master_directory.jsonl")
-    titles = load_titles(path) # load titles 
-    try:
-        question = input("> ").strip()
-    except (EOFError, KeyboardInterrupt):
-        print("error")
-    # retrieval query: last 2 user turns + current question + double hop data 
-            
-    recent_user = [m.content for m in history if isinstance(m, HumanMessage)][-2:]
-            
-    chunks = retrieve("\n".join(recent_user + [question]), hybrid)
-    chunks_text = "\n\n".join([doc.page_content for doc in chunks])
-    recorvered_mds = find_mds(chunks_text,titles)
-    if recorvered_mds:
-        double_hop_data = double_hop(chunks_text,titles)
-        final = chunks + double_hop_data
-        chunks_text = "\n\n---\n\n".join([f"Document Title: {doc.metadata.get('doc_title', 'Unknown')}\nContent:\n{doc.page_content}"for doc in final])
-                
-                
-    messages = [SystemMessage(content=SYSTEM_PROMPT.format(context = chunks_text))]
-    messages += history
-    messages.append(HumanMessage(content=question))
-    response = llm.invoke(messages)
-    answer = response.text   # str; .content may be a list of blocks
-    return answer
         
-if __name__ == "__main__":
-    chat_ai()
+_histories = {}     # session_id -> list of {"role", "content"}
+
+def chat_job(sid, question, max_turns=6):          # runs on the queue worker
+    hist = _histories.setdefault(sid, [])
+    hybrid, titles = get_retriever()
+
+    recent_user = [m["content"] for m in hist if m["role"] == "user"][-2:]
+    chunks = retrieve("\n".join(recent_user + [question]), hybrid)
+    chunks_text = "\n\n".join(d.page_content for d in chunks)
+
+    if find_mds(chunks_text, titles):
+        chunks_text = format_docs(chunks + double_hop(chunks_text, titles))
+
+    messages = [SystemMessage(content=SYSTEM_PROMPT.format(context=chunks_text))]  # fixes the KeyError
+    for m in hist[-2 * max_turns:]:
+        messages.append(HumanMessage(content=m["content"]) if m["role"] == "user"
+                        else AIMessage(content=m["content"]))
+    messages.append(HumanMessage(content=question))
+
+    answer = get_llm().invoke(messages).text
+    hist.append({"role": "user", "content": question})
+    hist.append({"role": "assistant", "content": answer})
+    return answer
+
+
+def read_results():
+    rows = []
+    for path in sorted(glob.glob(os.path.join(out_dir_output, "*.jsonl"))):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:   # half-written last line
+                    pass
+    return rows

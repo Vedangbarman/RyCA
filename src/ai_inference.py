@@ -22,6 +22,9 @@ API_KEY = os.getenv('GEMINI')
 os.environ["GOOGLE_API_KEY"] = API_KEY
 
 
+script_dir = os.path.dirname(os.path.realpath(__file__))
+path = os.path.join(script_dir, "..", "data", "master_directory", "master_directory.jsonl")
+
 class ComplianceEvaluation(BaseModel):
     """ Confirm schema and datatype of model output
     """
@@ -43,7 +46,7 @@ class ComplianceEvaluation(BaseModel):
     
 embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
 
-script_dir = os.path.dirname(os.path.realpath(__file__))
+
 in_dir_data = os.path.abspath(os.path.join(script_dir, "..", "chroma_db"))
 
 class ChatEvaluation(BaseModel):
@@ -55,6 +58,7 @@ def load_store(): # load chroma database
             embedding_function=embeddings,
             persist_directory=in_dir_data,
         )
+
 
 
 def build_retriever(): 
@@ -71,6 +75,14 @@ def build_retriever():
     dense = cos_store.as_retriever(search_kwargs={"k": K})
     return EnsembleRetriever(retrievers=[bm25, dense], weights=[0.2, 0.8])
 
+_hybrid, _titles = None, None
+
+def get_retriever():
+    global _hybrid, _titles
+    if _hybrid is None:
+        _hybrid = build_retriever()
+        _titles = load_titles(path)
+    return _hybrid, _titles
 
 def retrieve(query, hybrid, k=4):
     return hybrid.invoke(query)[:k]
@@ -79,7 +91,6 @@ def retrieve(query, hybrid, k=4):
 def invoke_ai():
     """ Match incoming notifications against rag database check for other master directory mention and if yes then retrieve 
     relevant data from that particular document """
-    script_dir = os.path.dirname(os.path.realpath(__file__))
     in_dir_config = os.path.abspath(os.path.join(script_dir,"..","config.json"))
 
 
@@ -101,18 +112,16 @@ def invoke_ai():
         for line in file_notifications:
             notifications.append(json.loads(line))
 
+    hybrid, titles = get_retriever()
+    
     in_dir_profile = os.path.abspath(os.path.join(script_dir,"..","profile.json"))
-    path = os.path.join(script_dir, "..", "data", "master_directory", "master_directory.jsonl")
     with open(in_dir_profile, "r", encoding="utf-8") as file_profile:
         profile = json.load(file_profile)
         output_path = current_week_file(out_dir_output, format="jsonl")
         
-        hybrid = build_retriever()
-        titles = load_titles(path)
         for i, json_line in enumerate(notifications):
             
             try : 
-                
                     llm = ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", temperature=0)
                     structured_llm = llm.with_structured_output(ComplianceEvaluation)
                 
@@ -192,7 +201,7 @@ def format_docs(docs):
         for d in docs
     )
 
-def chat_ai(max_turns=6):
+def chat_ai(question: str, history: list[dict]) -> str:
     """Function to chat with AI takes user query like "What is meant by Upper Layer in NBFC" and then find the relevant chunk 
     in rag database, it then checks the retrieved data for other master directory reference and then retrive the relevant 
     from those specific documents"""
@@ -201,39 +210,29 @@ def chat_ai(max_turns=6):
     history = []                 # HumanMessage / AIMessage objects
     path = os.path.join(script_dir, "..", "data", "master_directory", "master_directory.jsonl")
     titles = load_titles(path) # load titles 
-    while True:
-        try:
-            question = input("> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            break
-        if not question:
-            continue
-        if question.lower() in ("exit", "quit"):
-            break
-
-        # retrieval query: last 2 user turns + current question + double hop data 
-        
-        recent_user = [m.content for m in history if isinstance(m, HumanMessage)][-2:]
-        
-        chunks = retrieve("\n".join(recent_user + [question]), hybrid)
-        chunks_text = "\n\n".join([doc.page_content for doc in chunks])
-        recorvered_mds = find_mds(chunks_text,titles)
-        
-        if recorvered_mds:
-            double_hop_data = double_hop(chunks_text,titles)
-            final = chunks + double_hop_data
-            chunks_text = "\n\n---\n\n".join([f"Document Title: {doc.metadata.get('doc_title', 'Unknown')}\nContent:\n{doc.page_content}"for doc in final])
+    try:
+        question = input("> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("error")
+    # retrieval query: last 2 user turns + current question + double hop data 
             
+    recent_user = [m.content for m in history if isinstance(m, HumanMessage)][-2:]
             
-        messages = [SystemMessage(content=SYSTEM_PROMPT.format(chunks_text))]
-        messages += history[-2 * max_turns:]
-        messages.append(HumanMessage(content=question))
-
-        response = llm.invoke(messages)
-        answer = response.text   # str; .content may be a list of blocks
-        print(answer)
-
-        history.append(HumanMessage(content=question))
-        history.append(AIMessage(content=answer))
+    chunks = retrieve("\n".join(recent_user + [question]), hybrid)
+    chunks_text = "\n\n".join([doc.page_content for doc in chunks])
+    recorvered_mds = find_mds(chunks_text,titles)
+    if recorvered_mds:
+        double_hop_data = double_hop(chunks_text,titles)
+        final = chunks + double_hop_data
+        chunks_text = "\n\n---\n\n".join([f"Document Title: {doc.metadata.get('doc_title', 'Unknown')}\nContent:\n{doc.page_content}"for doc in final])
+                
+                
+    messages = [SystemMessage(content=SYSTEM_PROMPT.format(context = chunks_text))]
+    messages += history
+    messages.append(HumanMessage(content=question))
+    response = llm.invoke(messages)
+    answer = response.text   # str; .content may be a list of blocks
+    return answer
+        
 if __name__ == "__main__":
     chat_ai()

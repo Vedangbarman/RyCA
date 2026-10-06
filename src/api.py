@@ -1,10 +1,9 @@
-from contextlib import asynccontextmanager
+import ai_inference as ai
 from fastapi import FastAPI
 from pydantic import BaseModel
-
-import ai_inference as ai
 from llm_queue import submit, CHAT
 from one_ring import start_scheduler
+from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app):
@@ -25,3 +24,7 @@ def chat(req: ChatRequest):          # plain def, not async
 @app.get("/notifications")
 def notifications():
     return {"rows": ai.read_results()}
+
+@app.get("/chats")
+def chats():
+    return {"chats": ai.list_chats()}

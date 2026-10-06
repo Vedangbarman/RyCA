@@ -59,7 +59,7 @@ def match_data(notifications_data):
         file_path = os.path.dirname(os.path.realpath(__file__))
         in_dir_config_file = os.path.abspath(os.path.join(file_path, "..","..", "config.json"))
 
-        out_path = os.path.join(file_path, "..", "data", "notifications_matched")
+        out_path = os.path.join(file_path, "..","..", "data", "notifications_matched")
         os.makedirs(out_path, exist_ok=True)
         out_path_json = current_week_file(out_path, format="json")
 

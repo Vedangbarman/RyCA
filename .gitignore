@@ -12,6 +12,7 @@ __pycache__/
 
 # Data 
 data/error_logs/*
+data/chat/*
 data/notifications_clean/*
 data/notifications_matched/*
 data/master_directory/*
@@ -25,6 +26,7 @@ data/benchmark/results/*
 !data/notifications_output/.gitkeep
 !data/benchmark/data/.gitkeep
 !data/benchmark/results/.gitkeep
+!data/chat/.gitkeep
 chroma_db/*
 chroma_db/chroma.sqlite3/*
 *.sqlite3

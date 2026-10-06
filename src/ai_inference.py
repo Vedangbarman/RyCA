@@ -1,4 +1,5 @@
 import os
+import re 
 import glob
 import json
 import jsonlines
@@ -28,7 +29,7 @@ script_dir = os.path.dirname(os.path.realpath(__file__))
 path = os.path.join(script_dir, "..", "data", "master_directory", "master_directory.jsonl")
 out_dir_output = os.path.abspath(os.path.join(script_dir, "..", "data", "notifications_output"))
 _cache = {}
-
+out_dir_chat = os.path.abspath(os.path.join(script_dir, "..", "data", "chat"))
 
 class ComplianceEvaluation(BaseModel):
     """ Confirm schema and datatype of model output
@@ -215,10 +216,53 @@ def format_docs(docs):
         for d in docs
     )
         
-_histories = {}     # session_id -> list of {"role", "content"}
+_histories = {}     # chat name -> list of {"role", "content"}
+
+
+def safe_chat_name(name):
+    """The chat name becomes a folder name, so keep only letters, numbers, space, - and _."""
+    return re.sub(r"[^\w\- ]", "", name).strip()[:80] or "gatorade"
+
+
+def save_chat(name, messages):
+    folder = os.path.join(out_dir_chat, name)
+    os.makedirs(folder, exist_ok=True)
+    with jsonlines.open(current_week_file(folder, format="jsonl"), mode="a") as w:
+        for m in messages:
+            w.write({"ts": datetime.now(timezone.utc).isoformat(timespec="microseconds"), **m})
+
+
+def load_chat(name):
+    rows = []
+    for path in sorted(glob.glob(os.path.join(out_dir_chat, name, "*.jsonl"))):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:      # half-written last line
+                    pass
+    rows.sort(key=lambda r: r.get("ts", ""))      # works across week files
+    return rows
+
+
+def list_chats():
+    """Every saved chat, most recently used first."""
+    chats = []
+    if os.path.isdir(out_dir_chat):
+        for name in os.listdir(out_dir_chat):
+            rows = load_chat(name)
+            if rows:
+                chats.append({"name": name, "last": rows[-1].get("ts", ""),
+                              "messages": [{"role": r["role"], "content": r["content"]} for r in rows]})
+    chats.sort(key=lambda c: c["last"], reverse=True)
+    return [{"name": c["name"], "messages": c["messages"]} for c in chats]
+
 
 def chat_job(sid, question, max_turns=6):          # runs on the queue worker
-    hist = _histories.setdefault(sid, [])
+    sid = safe_chat_name(sid)
+    if sid not in _histories:                      # first message since a restart: pick the saved chat back up
+        _histories[sid] = load_chat(sid)
+    hist = _histories[sid]
     hybrid, titles = get_retriever()
 
     recent_user = [m["content"] for m in hist if m["role"] == "user"][-2:]
@@ -226,19 +270,19 @@ def chat_job(sid, question, max_turns=6):          # runs on the queue worker
     chunks_text = "\n\n".join(d.page_content for d in chunks)
 
     if find_mds(chunks_text, titles):
-        chunks_text = format_docs(chunks + double_hop(chunks_text, titles))
+        chunks_text = format_docs(chunks + double_hop(chunks_text, titles)[:4])
 
-    messages = [SystemMessage(content=SYSTEM_PROMPT.format(context=chunks_text))]  # fixes the KeyError
+    messages = [SystemMessage(content=SYSTEM_PROMPT.format(context=chunks_text))]
     for m in hist[-2 * max_turns:]:
         messages.append(HumanMessage(content=m["content"]) if m["role"] == "user"
                         else AIMessage(content=m["content"]))
     messages.append(HumanMessage(content=question))
 
     answer = get_llm().invoke(messages).text
-    hist.append({"role": "user", "content": question})
-    hist.append({"role": "assistant", "content": answer})
+    new = [{"role": "user", "content": question}, {"role": "assistant", "content": answer}]
+    save_chat(sid, new)                            # disk first: if this fails, memory stays unchanged
+    hist += new
     return answer
-
 
 def read_results():
     rows = []

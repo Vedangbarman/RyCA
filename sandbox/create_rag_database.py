@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
+from sentence_transformers import SentenceTransformer
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -36,7 +37,7 @@ def get_vector_store():
         raise RuntimeError("GEMINI key not found - check your .env file")
     os.environ["GOOGLE_API_KEY"] = api_key
 
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+    embeddings = SentenceTransformer("google/embeddinggemma-2")
     return Chroma(
         collection_name="master_directories",
         embedding_function=embeddings,

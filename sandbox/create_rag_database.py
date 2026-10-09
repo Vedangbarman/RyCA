@@ -7,9 +7,8 @@ from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from sentence_transformers import SentenceTransformer
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
 load_dotenv()
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -30,14 +29,16 @@ splitter = RecursiveCharacterTextSplitter(
     separators=["\n", ". ", " ", ""],
 )
 
+model_path = os.path.abspath(os.path.join(script_dir, "..", "model","embeddinggemma-2"))
 
 def get_vector_store():
-    api_key = os.getenv("GEMINI")
-    if not api_key:
-        raise RuntimeError("GEMINI key not found - check your .env file")
-    os.environ["GOOGLE_API_KEY"] = api_key
-
-    embeddings = SentenceTransformer("google/embeddinggemma-2")
+    # Pass the absolute path directly to HuggingFaceEmbeddings
+    embeddings = HuggingFaceEmbeddings(
+        model_name=model_path,
+        model_kwargs={"device": "cuda"},  # or "cpu"
+        encode_kwargs={"normalize_embeddings": True}
+    )
+    
     return Chroma(
         collection_name="master_directories",
         embedding_function=embeddings,

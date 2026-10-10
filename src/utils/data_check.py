@@ -1,16 +1,14 @@
 import os
 import json 
+import traceback
 from datetime import datetime,timezone
+from utils.error_store import error_store
 from email.utils import parsedate_to_datetime
 from utils.week_file_save import current_week_file
 
+
 script_dir = os.path.dirname(os.path.realpath(__file__))
 in_dir_config_file = os.path.abspath(os.path.join(script_dir,"..","..","config.json"))
-
-out_dir_error_logs = os.path.abspath(os.path.join(script_dir,"..","data","error_logs"))
-os.makedirs(out_dir_error_logs, exist_ok=True)
-
-
 
 def check_data(article_list,file_path):
         try:
@@ -71,9 +69,5 @@ def check_data(article_list,file_path):
             errors_ds['Error Count'] = "not_applicable"
             errors_ds['Error_File'] = "Scraper"          
             format_errors = "json"
-            current_path_error_log = current_week_file(out_dir_error_logs,format_errors)
-            data = json.dumps(errors_ds)
-            with open (current_path_error_log, "a") as file:
-                file.write(data + "\n")
-            print(f"Data saved to {current_path_error_log}")
+            error_store(error_message=str(e),trace_back = traceback.format_exc(),time = str(datetime.now(timezone.utc)),error_count="Null",error_file="ai_inference")
             return []

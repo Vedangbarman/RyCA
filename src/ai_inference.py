@@ -2,24 +2,29 @@ import os
 import re 
 import glob
 import json
+import torch
 import jsonlines
 import traceback
 from typing import Optional
 from dotenv import load_dotenv
+from functools import lru_cache
 from langchain_chroma import Chroma
+from llm_queue import submit, NOTIFY
 from pydantic import BaseModel, Field
+from langchain_openai import ChatOpenAI
 from datetime import datetime, timezone
 from utils.error_store import error_store
 from langchain_core.documents import Document
 from utils.week_file_save import current_week_file
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.retrievers import BM25Retriever
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_classic.retrievers import EnsembleRetriever
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from utils.find_reference import find_mds, load_titles, double_hop
+from langchain_huggingface import HuggingFacePipeline, ChatHuggingFace
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig, pipeline
 
-from llm_queue import submit, NOTIFY
+
 load_dotenv()
 API_KEY = os.getenv('GEMINI')
 os.environ["GOOGLE_API_KEY"] = API_KEY
@@ -28,8 +33,12 @@ os.environ["GOOGLE_API_KEY"] = API_KEY
 script_dir = os.path.dirname(os.path.realpath(__file__))
 path = os.path.join(script_dir, "..", "data", "master_directory", "master_directory.jsonl")
 out_dir_output = os.path.abspath(os.path.join(script_dir, "..", "data", "notifications_output"))
-_cache = {}
+embedding_path = os.path.abspath(os.path.join(script_dir, "..", "model","embeddinggemma-2"))
+model_path = os.path.abspath(os.path.join(script_dir, "..", "model","google_gemma-4-E4B-it-Q4_K_M","google_gemma-4-E4B-it-Q4_K_M.gguf"))
 out_dir_chat = os.path.abspath(os.path.join(script_dir, "..", "data", "chat"))
+
+_cache = {}
+
 
 class ComplianceEvaluation(BaseModel):
     """ Confirm schema and datatype of model output
@@ -50,11 +59,24 @@ class ComplianceEvaluation(BaseModel):
                     )
     effective_date: str = Field(description="The date string formatted exactly as 'ddd, DD MMM YYYY HH:MM:SS' (e.g. 'Mon, 21 Sep 2026 17:25:00')")
     
+@lru_cache(maxsize=1)
 def get_embeddings():
-    return GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+    return HuggingFaceEmbeddings(
+        model_name=embedding_path,
+        model_kwargs={"device": "cpu"},  # keeps VRAM free for the LLM
+        encode_kwargs={"normalize_embeddings": True},
+    )
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+model_path = os.path.abspath(os.path.join(script_dir, "..", "model", "gemma-4-e4b-weights"))
+
+from langchain_community.chat_models import ChatLlamaCpp
+
+@lru_cache(maxsize=1)
+
 
 def get_llm():
-    return ChatGoogleGenerativeAI(model="gemini-3.1-flash-lite", temperature=0)
+    return ChatOpenAI(base_url="http://localhost:8080/v1", api_key="none", model="local", temperature=0)
 
 embeddings = get_embeddings()
 

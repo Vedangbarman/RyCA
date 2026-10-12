@@ -2,7 +2,6 @@ import os
 import re 
 import glob
 import json
-import torch
 import jsonlines
 import traceback
 from typing import Optional
@@ -20,9 +19,8 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.retrievers import BM25Retriever
 from langchain_classic.retrievers import EnsembleRetriever
 from utils.find_reference import find_mds, load_titles, double_hop
-from langchain_huggingface import HuggingFacePipeline, ChatHuggingFace
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig, pipeline
+
 
 
 load_dotenv()
@@ -71,10 +69,37 @@ def get_embeddings():
 from langchain_community.chat_models import ChatLlamaCpp
 
 @lru_cache(maxsize=1)
-
-
 def get_llm():
-    return ChatOpenAI(base_url="http://localhost:8080/v1", api_key="none", model="local", temperature=0)
+    config_path = os.path.abspath(os.path.join(script_dir, "..", "config.json"))
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+    temperature = config["Hyper_Param"]["temperature"]
+    top_p = config["Hyper_Param"]["top_p"]
+    max_tokens = config["Hyper_Param"]["max_tokens"]
+    frequency_penalty = config["Hyper_Param"]["frequency_penalty"]
+    presence_penalty = config["Hyper_Param"]["presence_penalty"]
+    seed = config["Hyper_Param"]["seed"]
+    top_k = config["Hyper_Param"]["top_k"]
+    min_p = config["Hyper_Param"]["min_p"]
+    repeat_penalty = config["Hyper_Param"]["repeat_penalty"]
+
+    return ChatOpenAI(
+        base_url="http://localhost:8080/v1",
+        api_key="none",
+        model="local",
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+        frequency_penalty=frequency_penalty,
+        presence_penalty=presence_penalty,
+        seed=seed,
+        extra_body={
+            "top_k": top_k,
+            "min_p": min_p,
+            "repeat_penalty": repeat_penalty,
+        },
+    )
 
 embeddings = get_embeddings()
 

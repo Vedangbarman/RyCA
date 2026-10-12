@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import json
 import argparse
@@ -16,11 +17,13 @@ IN_DIR_DATA = os.path.abspath(
 )
 OUT_DIR_CHROMA = os.path.abspath(os.path.join(script_dir, "..", "chroma_db"))
 
-MAX_CHARS = 1500    # paragraphs longer than this get split further
-OVERLAP = 150       # overlap between the pieces of a split paragraph
-BATCH_SIZE = 10               # chunks per embedding call
-PAUSE_BETWEEN_BATCHES = 10    # seconds to wait after each successful batch
-MAX_RETRIES = 8               # retries per batch on a 429 (backoff: 15s, 30s, 60s, 120s, ...)
+MAX_CHARS = 1500    
+OVERLAP = 150       
+BATCH_SIZE = 10               
+PAUSE_BETWEEN_BATCHES = 0
+MAX_RETRIES = 8               
+
+CHAPTER_RE = re.compile(r"^(chapter|part)\s*[-–]?\s*([ivxlc]+|[a-z]|\d+)\b", re.I)
 
 splitter = RecursiveCharacterTextSplitter(
     chunk_size=MAX_CHARS,
@@ -74,9 +77,14 @@ def parse_document(item):
     chunks = []
     cur = {"chapter": "Preamble", "section": "", "para_no": "", "text": ""}
 
-    for child in inner.find_all(recursive=False):
+    kids = inner.find_all(recursive=False)
+    hrs = [i for i, k in enumerate(kids) if k.name == "hr"]
+    if hrs:
+        kids = kids[:hrs[-1]]  # stop at the LAST <hr> (footer / superseded-circulars annex)
+
+    for child in kids:
         if child.name == "hr":
-            break
+            continue  # <hr> in the middle, e.g. between cover circular and the Directions
 
         # `text` must be defined BEFORE anything below uses it
         text = child.get_text(" ", strip=True)
@@ -91,7 +99,7 @@ def parse_document(item):
         heading_text = span.get_text(" ", strip=True) if span_head else text
 
         if child.name == "table":
-            if text.startswith("Table of Contents"):
+            if text.lower().startswith(("table of contents", "index")):
                 continue
             rows = [
                 " | ".join(c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"]))
@@ -99,7 +107,7 @@ def parse_document(item):
             ]
             cur["text"] += "\n" + "\n".join(rows)
 
-        elif is_head and text.lower().startswith("chapter"):
+        elif CHAPTER_RE.match(text) and (is_head or len(text) < 80):
             flush(cur, chunks, item)
             cur["chapter"] = text
             cur["section"] = ""

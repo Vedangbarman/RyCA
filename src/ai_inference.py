@@ -67,8 +67,6 @@ def get_embeddings():
         encode_kwargs={"normalize_embeddings": True},
     )
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-model_path = os.path.abspath(os.path.join(script_dir, "..", "model", "gemma-4-e4b-weights"))
 
 from langchain_community.chat_models import ChatLlamaCpp
 

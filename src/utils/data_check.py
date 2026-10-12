@@ -16,7 +16,6 @@ def check_data(article_list,file_path):
                 data = json.load(file)
             valid_articles = []
             
-            date_format = "%a, %d %b %Y %H:%M:%S"
             ref_date = data["data_check"]["ref_date"]
             ref_article = data["data_check"]["ref_article"]
             delta_ref_date = data["data_check"]["delta_ref_date"]

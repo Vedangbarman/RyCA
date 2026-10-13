@@ -1,8 +1,8 @@
 import os
 import lxml
 import json 
-import requests
 import time
+import requests
 import traceback
 import pandas as pd
 from bs4 import BeautifulSoup

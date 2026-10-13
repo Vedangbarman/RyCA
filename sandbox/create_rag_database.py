@@ -9,18 +9,15 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
 load_dotenv()
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
-IN_FILE_DIRECTORIES = os.path.abspath(
-    os.path.join(script_dir, "..", "data", "master_directory", "master_directory_html.jsonl")
-)
-IN_FILE_NOTIFICATIONS = os.path.abspath(
-    os.path.join(script_dir, "..", "data", "notification_historical", "filtered_notifications_deduped.jsonl")
-)
+IN_FILE_DIRECTORIES = os.path.abspath(os.path.join(script_dir, "..", "data", "master_directory", "master_directory_html.jsonl"))
+IN_FILE_NOTIFICATIONS = os.path.abspath(os.path.join(script_dir, "..", "data", "notification_historical", "filtered_notifications_deduped.jsonl"))
 OUT_DIR_CHROMA = os.path.abspath(os.path.join(script_dir, "..", "chroma_db"))
 
-# Value stored in the `source` metadata field - use it to filter searches
+
 SOURCE_DIRECTORIES = "directories"
 SOURCE_NOTIFICATIONS = "notifications"
 
@@ -31,9 +28,9 @@ PAUSE_BETWEEN_BATCHES = 0
 MAX_RETRIES = 8
 
 # GPU memory controls (the notifications are embedded whole, so they can be very long)
-MAX_SEQ_LENGTH = 1024    # tokens; longer text is cut off for the embedding only (full text is still stored)
-ENCODE_BATCH_SIZE = 4    # texts per GPU forward pass; lower this if you still run out of memory
-NOTIFICATION_BATCH_SIZE = 2   # notifications are long, so save + report progress every 2 documents
+MAX_SEQ_LENGTH = 1024    
+ENCODE_BATCH_SIZE = 4    
+NOTIFICATION_BATCH_SIZE = 2   
 
 CHAPTER_RE = re.compile(r"^(chapter|part)\s*[-–]?\s*([ivxlc]+|[a-z]|\d+)\b", re.I)
 

@@ -1,8 +1,8 @@
 import os
-import json
 import re
-import unicodedata
+import json
 import jsonlines
+import unicodedata
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings

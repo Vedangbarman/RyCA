@@ -8,6 +8,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from functools import lru_cache
 from langchain_chroma import Chroma
+from utils.timings import timer, log
 from llm_queue import submit, NOTIFY
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
@@ -102,10 +103,7 @@ def get_llm():
     )
 
 embeddings = get_embeddings()
-
-
 in_dir_data = os.path.abspath(os.path.join(script_dir, "..", "chroma_db"))
-
 
 class ChatEvaluation(BaseModel):
     answer : str
@@ -123,17 +121,16 @@ def build_retriever():
     """ get raw documetns for bm25 and build retriever functions 
     because if I am calling retrieve function inside loop so having this logic in there means wastage of compute"""
     cos_store = load_store()
-    data = cos_store.get()
+    data = cos_store.get()                                   # no where=
     corpus = [
         Document(page_content=t, metadata={**(m or {}), "chunk_id": i})
         for t, m, i in zip(data["documents"], data["metadatas"], data["ids"])
     ]
     K = 4
     bm25 = BM25Retriever.from_documents(corpus, k=K)
-    dense = cos_store.as_retriever(search_kwargs={"k": K})
+    dense = cos_store.as_retriever(search_kwargs={"k": K})   # no filter
     return EnsembleRetriever(retrievers=[bm25, dense], weights=[0.2, 0.8])
 
-_hybrid, _titles = None, None
 
 def get_retriever():
     if "hybrid" not in _cache:
@@ -303,29 +300,35 @@ def list_chats():
     return [{"name": c["name"], "messages": c["messages"]} for c in chats]
 
 
-def chat_job(sid, question, max_turns=6):          # runs on the queue worker
+def chat_job(sid, question, max_turns=6):
+    log(f"chat_job called, file={__file__}")
     sid = safe_chat_name(sid)
-    if sid not in _histories:                      # first message since a restart: pick the saved chat back up
+    if sid not in _histories:
         _histories[sid] = load_chat(sid)
     hist = _histories[sid]
     hybrid, titles = get_retriever()
 
     recent_user = [m["content"] for m in hist if m["role"] == "user"][-2:]
-    chunks = retrieve("\n".join(recent_user + [question]), hybrid)
+    with timer("chat/retrieve"):
+        chunks = retrieve("\n".join(recent_user + [question]), hybrid)
     chunks_text = "\n\n".join(d.page_content for d in chunks)
 
     if find_mds(chunks_text, titles):
-        chunks_text = format_docs(chunks + double_hop(chunks_text, titles)[:4])
+        with timer("chat/double_hop"):
+            chunks_text = format_docs(chunks + double_hop(chunks_text, titles)[:4])
 
     messages = [SystemMessage(content=SYSTEM_PROMPT.format(context=chunks_text))]
     for m in hist[-2 * max_turns:]:
         messages.append(HumanMessage(content=m["content"]) if m["role"] == "user"
                         else AIMessage(content=m["content"]))
     messages.append(HumanMessage(content=question))
+    log(f"[timing] chat prompt chars: {sum(len(m.content) for m in messages)}")
 
-    answer = get_llm().invoke(messages).text
+    with timer("chat/llm"):
+        answer = get_llm().invoke(messages).text
+
     new = [{"role": "user", "content": question}, {"role": "assistant", "content": answer}]
-    save_chat(sid, new)                            # disk first: if this fails, memory stays unchanged
+    save_chat(sid, new)
     hist += new
     return answer
 

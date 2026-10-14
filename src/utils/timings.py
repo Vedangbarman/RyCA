@@ -1,7 +1,7 @@
 import os, time
 from contextlib import contextmanager
 
-LOG = os.path.abspath(os.path.join(os.path.dirname(__file__),"..", "..","data","output" "timing.log"))
+LOG = os.path.abspath(os.path.join(os.path.dirname(__file__),"..", "..","output" "timing.log"))
 
 def log(msg):
     line = f"{time.strftime('%H:%M:%S')} {msg}"

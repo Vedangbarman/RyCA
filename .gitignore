@@ -63,3 +63,7 @@ docs/generated/
 /config.json
 /profile.json
 /start.bat
+
+#add specific file 
+!output/timing.log
+

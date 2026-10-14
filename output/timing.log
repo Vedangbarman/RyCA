@@ -1,0 +1,5 @@
+18:20:09 chat_job called, file
+18:20:11 [timing] chat/retrieve: 0.30s
+18:20:12 [timing] chat/double_hop: 1.16s
+18:20:12 [timing] chat prompt chars: 35448
+18:20:58 [timing] chat/llm: 45.94s

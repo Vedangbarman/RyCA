@@ -1,13 +1,63 @@
 import os 
+import re
 import json
 import requests
 from bs4 import BeautifulSoup
-in_dir_data = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)),"..","data","setup.txt"))
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from langchain_chroma import Chroma
+from langchain_core.documents import Document
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-out_dir_notifications = in_dir_data = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)),"..","data","notification","notification.jsonl"))
+script_dir = os.path.dirname(os.path.realpath(__file__))
+in_dir_data = os.path.abspath(os.path.join(os.path.dirname(script_dir,"..","data","setup.txt")))
+out_dir_notifications = in_dir_data = os.path.abspath(os.path.join(os.path.dirname(script_dir,"..","data","notification","notification.jsonl")))
 os.makedirs(out_dir_notifications,exist_ok = True)
-out_dir_md = out_dir_notifications = in_dir_data = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)),"..","data","md_historical","md.jsonl"))
+out_dir_md = out_dir_notifications = in_dir_data = os.path.abspath(os.path.join(script_dir,"..","data","md_historical","md.jsonl"))
 os.makedirs(out_dir_md,exist_ok = True)
+out_dir_db = os.path.abspath(os.path.join(script_dir, "..", "chroma_db"))
+
+#env variables ( kind of of ) and also gatorade
+
+SOURCE_DIRECTORIES = "directories"
+SOURCE_NOTIFICATIONS = "notifications"
+
+max_char = 1500
+overlap = 150
+batch_size = 10
+retries = 8
+max_len = 1024    
+encode_batch_size = 4    
+notification_batch_size = 2  
+
+CHAPTER_RE = re.compile(r"^(chapter|part)\s*[-–]?\s*([ivxlc]+|[a-z]|\d+)\b", re.I)
+
+splitter = RecursiveCharacterTextSplitter(
+    chunk_size=max_char,
+    chunk_overlap=overlap,
+    separators=["\n", ". ", " ", ""],
+)
+
+model_path = os.path.abspath(os.path.join(script_dir, "..", "model", "embeddinggemma-2"))
+
+def get_vector_store(device="cuda"):
+    # Pass the absolute path directly to HuggingFaceEmbeddings
+    embeddings = HuggingFaceEmbeddings(
+        model_name=model_path,
+        model_kwargs={"device": device},  # "cuda" or "cpu"
+        encode_kwargs={"normalize_embeddings": True, "batch_size": encode_batch_size},
+    )
+    # Without this cap the model pads every batch to its longest text, which is what ran out of memory
+    embeddings._client.max_seq_length = max_len
+    print(f"Embedding with max_seq_length={max_len}, batch_size={encode_batch_size}")
+
+    return Chroma(
+        collection_name="master_directories",
+        embedding_function=embeddings,
+        persist_directory=out_dir_db,
+    )
+
 
 def setup():
     with open(in_dir_data, "r", encoding="utf-8") as file:

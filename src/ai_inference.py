@@ -126,7 +126,7 @@ def build_retriever():
         Document(page_content=t, metadata={**(m or {}), "chunk_id": i})
         for t, m, i in zip(data["documents"], data["metadatas"], data["ids"])
     ]
-    K = 4
+    K = 2
     bm25 = BM25Retriever.from_documents(corpus, k=K)
     dense = cos_store.as_retriever(search_kwargs={"k": K})   # no filter
     return EnsembleRetriever(retrievers=[bm25, dense], weights=[0.2, 0.8])

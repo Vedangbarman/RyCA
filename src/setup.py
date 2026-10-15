@@ -58,6 +58,59 @@ def get_vector_store(device="cuda"):
         persist_directory=out_dir_db,
     )
 
+def flush(cur,chunks, item):
+    text = cur["text"].strip()
+    if text:
+        chunks.append({
+            "doc_id":str(item["id"]),
+            "doc_title":item.get("title") or"",
+            "url": item.get("url") or "",
+            "chapter" : cur["chapter"],
+            "section" : cur["section"],
+            "para_no" : cur["para_no"],
+            "text": text,
+        })
+    cur["para_no"] = ""
+    cur["text"] = ""
+
+def parse_document(item):
+    soup = BeautifulSoup(item["text"],"html.parser")
+    table = soup.find("table", class_="td")
+    if table:
+        inner = table.find("td")
+    else:
+        None
+    
+    if inner is None:
+        print(f"[skip] no <table class='td'><td> found in document {item.get('id')}")
+        return []
+
+    chunks = []
+    cur = {"chapter" : "Preamble", "section" : "", "para_no" : "", "text" : ""}
+    
+    kids = inner.find_all(recursive = False)
+    hrs = [i for i, k in enumerate(kids) if k.name == "hr"]
+    
+    if hrs:
+        kids = kids[:hrs[-1]]
+    
+    for child in kids:
+        if child.name =="hr":
+            continue
+        
+        text = child.get_text("",strip=True)
+        if not text:
+            continue
+        first_word = text.split(" ")[0]
+        
+        span = child.find(class_="head")
+        own_head = "head" in (child.get("class") or [])
+        span_head = span is not None and len(span.get_text(strip=True)) > 0.8 * len(text)
+        is_head = own_head or span_head
+        heading_text = span.get_text(" ", strip=True) if span_head else text
+        
+        
+            
 
 def setup():
     with open(in_dir_data, "r", encoding="utf-8") as file:

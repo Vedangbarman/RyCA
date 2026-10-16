@@ -5,12 +5,12 @@ import copy
 import time
 import json
 import argparse
-import traceback
 import requests
 import chromadb
-from datetime import datetime, timezone
+import traceback
 from bs4 import BeautifulSoup
 from langchain_chroma import Chroma
+from datetime import datetime, timezone
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter

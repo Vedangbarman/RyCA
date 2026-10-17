@@ -4,7 +4,7 @@ import glob
 import json
 import jsonlines
 import traceback
-from typing import Optional
+from typing import Literal
 from dotenv import load_dotenv
 from functools import lru_cache
 from langchain_chroma import Chroma
@@ -39,17 +39,7 @@ out_dir_chat = os.path.abspath(os.path.join(script_dir, "..", "data", "chat"))
 _cache = {}
 
 
-class ComplianceEvaluation(BaseModel):
-    """ Confirm schema and datatype of model output
-    """
-    title: str
-    link: str
-    notification_date : str = Field(description="The date string formatted exactly as 'ddd, DD MMM YYYY HH:MM:SS' (e.g. 'Mon, 21 Sep 2026 17:25:00')")
-    explanation : str
-    actions_required : str
-    effective_date: str = Field(description="The date string formatted exactly as 'ddd, DD MMM YYYY HH:MM:SS' (e.g. 'Mon, 21 Sep 2026 17:25:00')")
-    retrieval_status : int 
-    correct_master_dir : str
+
     
     
 @lru_cache(maxsize=1)
@@ -132,6 +122,21 @@ def get_retriever():
         _cache["titles"] = load_titles(path)
     return _cache["hybrid"], _cache["titles"]
 
+hybrid,_titles = get_retriever()
+TITLES = Literal[(*_titles.values(), "none")]
+class ComplianceEvaluation(BaseModel,):
+    """ Confirm schema and datatype of model output
+    """
+    title: str
+    link: str
+    notification_date : str = Field(description="The date string formatted exactly as 'ddd, DD MMM YYYY HH:MM:SS' (e.g. 'Mon, 21 Sep 2026 17:25:00')")
+    explanation : str
+    actions_required : str
+    effective_date: str = Field(description="The date string formatted exactly as 'ddd, DD MMM YYYY HH:MM:SS' (e.g. 'Mon, 21 Sep 2026 17:25:00')")
+    retrieval_status : int 
+    correct_master_dir : TITLES
+
+
 def retrieve(query, hybrid, k=4):
     return hybrid.invoke(query)[:k]
 
@@ -179,7 +184,7 @@ def run_batch():
                     recorvered_mds = find_mds(combined_text,titles)
                     
                     if recorvered_mds:
-                        double_hop_data = double_hop(combined_text,titles)
+                        double_hop_data = double_hop(combined_text, recorvered_mds)
                         final = retrieved_data + double_hop_data
                         combined_text = "\n\n---\n\n".join([
                                 f"Document Title: {doc.metadata.get('doc_title', 'Unknown')}\nContent:\n{doc.page_content}"
@@ -199,7 +204,7 @@ def run_batch():
                                 "actions_required" (actions required by the company to make).
                                 "notification_date" (when the notification was issused)
                                 "effective_date" ( when does the notification takes effect in only return when date is mentioned in notification otherwise return not mentioned in notification) 
-                                "retrieval_status" : return -1 ( If incorrect ) or 0  ( if retrieval was not needed ) or 1 (Correct) and numbers only
+                                "retrieval_status" : return -1 ( If incorrect ) or 0  ( if retrieval was not needed ) or 1 (Correct) and numbers only return 2 if you can't determine the master directory
                                 "correct_master_dir" : Return actual master dir name if retrieval_status is -1 from the notification
 
                                 Profile:
@@ -239,6 +244,59 @@ def run_batch():
                                 """
                             
                     evaluation : ComplianceEvaluation = structured_llm.invoke(promt)
+                    
+                    tool_calling = data["misc"]["tool_calling"]
+                    if tool_calling == "on":
+                        tool_calling_retries = data["misc"]["tool_calling_retires"]
+                        previous = None
+                        for i in range(tool_calling_retries):
+                            if evaluation.retrieval_status == -1:
+                                if evaluation.correct_master_dir == previous:
+                                    break
+                                previous = evaluation.correct_master_dir
+                                correct_master_dir = []
+                                correct_master_dir.append(evaluation.correct_master_dir)
+                                tool_called_data = double_hop(json_line["clean_description"],correct_master_dir)
+                                correct_text = "\n\n".join([doc.page_content for doc in tool_called_data])
+                                promt = f"""You are Regulatory compliance agent your task is to take company profile tagged with Profile : and Data : (Which is reserve bank of India Notifications)
+                                        and retrieved_data which rag retrieves on basis of notification from vector database made up of rbi master directories your job is to look at the data
+                                        and see if the notification is relevant to the company based on the profile if yes then look at the retrieved data to check the context and what changes 
+                                        the notification proposes to the master directory based on the below format and if retrieved data is wrong return actual master directory name from 
+                                        which data must be retrieved and only return it when it's needed like some notification are general rules that don't need retirveal but the architecture is 
+                                        two step retrieval so data always retrieves. 
+                                        "title" ( as mentioned in "data")
+                                        "link" ( as mentioned in "data")
+                                        "explanation" (explane new changes and old changes and how it affect things in proper words as described in notification),
+                                        "actions_required" (actions required by the company to make).
+                                        "notification_date" (when the notification was issused)
+                                        "effective_date" ( when does the notification takes effect in only return when date is mentioned in notification otherwise return not mentioned in notification) 
+                                        "retrieval_status" : return -1 ( If incorrect ) or 0  ( if retrieval was not needed ) or 1 (Correct) and numbers only return 2 if you can't determine the master directory
+                                        "correct_master_dir" : Return actual master dir name if retrieval_status is -1 from the notification otherwise return none
+                                        Profile:
+                                        {json.dumps(profile,indent = 2 )}                       
+                                        Data : 
+                                        {json.dumps(json_line,indent = 2 )}
+                                                                
+                                        Retrieved_Data
+                                        {correct_text}
+                                        """
+                                if not tool_called_data:
+                                    break
+                                try:
+                                    evaluation = structured_llm.invoke(promt)
+                                except Exception as e:
+                                    error_store(error_message=str(e), trace_back=traceback.format_exc(),
+                                                time=str(datetime.now(timezone.utc)), error_count="Null",
+                                                error_file="ai_inference")
+                                    break
+                            else:
+                                break
+                        if evaluation.retrieval_status == -1:
+                            evaluation.explanation = f"The model could not retrieve the correct master direction after {tool_calling_retries} retries, so the data could not be retrieved. Please refer to the link for the full details of this notification."
+                            evaluation.actions_required = "Not available. Please refer to the link."
+                            evaluation.effective_date = "Not available"   
+                                
+                        
                     
                     results.append(evaluation.model_dump())
 

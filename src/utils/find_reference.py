@@ -11,8 +11,10 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 load_dotenv()
 API_KEY = os.getenv('GEMINI')
 os.environ["GOOGLE_API_KEY"] = API_KEY
-embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
 
+
+script_dir = os.path.dirname(os.path.realpath(__file__))
+embedding_path = os.path.abspath(os.path.join(script_dir, "..", "model","embeddinggemma-2"))
 script_dir = os.path.dirname(os.path.realpath(__file__))
 in_dir_data = os.path.abspath(os.path.join(script_dir, "..", "chroma_db"))
 
@@ -50,7 +52,7 @@ def find_mds(text: str, titles: dict[str, str]) -> list[str]:
 def load_store(): # load chroma database
     return Chroma(
         collection_name="master_directories",
-        embedding_function=embeddings,
+        embedding_function=embedding_path,
         persist_directory=in_dir_data,
     )
 
@@ -58,11 +60,11 @@ def build_title_filter(title_keywords: list[str]) -> dict:
     if not title_keywords:
         return {}
     if len(title_keywords) == 1:
-        return {"doc_title": {"$contains": title_keywords[0]}}
+        return {"doc_title": {"$in": title_keywords[0]}}
     
     return {
         "$or": [
-            {"doc_title": {"$contains": kw}} for kw in title_keywords
+            {"doc_title": {"$in": kw}} for kw in title_keywords
         ]
     }
 

@@ -44,19 +44,13 @@ class ComplianceEvaluation(BaseModel):
     """
     title: str
     link: str
-    pubdate : str = Field(description="The date string formatted exactly as 'ddd, DD MMM YYYY HH:MM:SS' (e.g. 'Mon, 21 Sep 2026 17:25:00')")
-    is_applicable : bool
-    is_master_direction_matching : bool
-    reason : Optional[str] = None
-    correct_master_dir : Optional[str] = None
-    diff : str
+    notification_date : str = Field(description="The date string formatted exactly as 'ddd, DD MMM YYYY HH:MM:SS' (e.g. 'Mon, 21 Sep 2026 17:25:00')")
     explanation : str
     actions_required : str
-    action_date: str = Field(description="Either a date formatted as 'ddd, DD MMM YYYY HH:MM:SS', "
-                                "or the exact text from the notification describing when "
-                                "the change takes effect, if no specific date is given."
-                    )
     effective_date: str = Field(description="The date string formatted exactly as 'ddd, DD MMM YYYY HH:MM:SS' (e.g. 'Mon, 21 Sep 2026 17:25:00')")
+    retrieval_status : int 
+    correct_master_dir : str
+    
     
 @lru_cache(maxsize=1)
 def get_embeddings():
@@ -151,7 +145,7 @@ def run_batch():
     os.makedirs(out_dir_output,exist_ok = True)
 
     with open(in_dir_config) as f:
-        data = json.load(f)
+        data = json.load(f)   
 
     debug = False
     if debug:
@@ -191,44 +185,58 @@ def run_batch():
                                 f"Document Title: {doc.metadata.get('doc_title', 'Unknown')}\nContent:\n{doc.page_content}"
                                 for doc in final])
                         
-   
-                    promt = f"""Evaluate compliance applicability. 
-                            "title"(title of notification), "link" (link of notification), "pubdate" (as mentioned in data),
-                            "is_applicable" (boolean),"is_master_direction_matching" (boolean),"reason"(if master directory doesn't match to the given data return reason if no master directory to match return none),
-                            "correct_master_dir"(return not applicable if no master dir needed, mention correct one if master directory mentioned is wrong with full title as mentioned in circular ,otherwise write correct), 
-                            "diff","mention direct proposed ( if not return not applicable ) changes in the text 
-                            example : Reserve Bank of India (Non-Banking Financial Companies – Concentration Risk Management) Fourth Amendment Directions, 2026
+                    if data["misc"]["tool_calling"] == "on":
+                             
+                        promt = f"""You are Regulatory compliance agent your task is to take company profile tagged with Profile : and Data : (Which is reserve bank of India Notifications)
+                                and retrieved_data which rag retrieves on basis of notification from vector database made up of rbi master directories your job is to look at the data
+                                and see if the notification is relevant to the company based on the profile if yes then look at the retrieved data to check the context and what changes 
+                                the notification proposes to the master directory based on the below format and if retrieved data is wrong return actual master directory name from 
+                                which data must be retrieved and only return it when it's needed like some notification are general rules that don't need retirveal but the architecture is 
+                                two step retrieval so data always retrieves. 
+                                "title" ( as mentioned in "data")
+                                "link" ( as mentioned in "data")
+                                "explanation" (explane new changes and old changes and how it affect things in proper words as described in notification),
+                                "actions_required" (actions required by the company to make).
+                                "notification_date" (when the notification was issused)
+                                "effective_date" ( when does the notification takes effect in only return when date is mentioned in notification otherwise return not mentioned in notification) 
+                                "retrieval_status" : return -1 ( If incorrect ) or 0  ( if retrieval was not needed ) or 1 (Correct) and numbers only
+                                "correct_master_dir" : Return actual master dir name if retrieval_status is -1 from the notification
 
-                            The Reserve Bank has issued the Reserve Bank of India (Non-Banking Financial Companies – Concentration Risk Management) Directions, 2025 dated November 28, 2025 (hereinafter referred to as ‘Directions’). On a review, it has been decided to revise the large exposure framework for Infrastructure Debt Fund-Non-Banking Financial Company (IDF-NBFC) in the Upper Layer.
-
-                            2. Accordingly, in exercise of the powers conferred by Chapter III B of the Reserve Bank of India Act, 1934, and all other provisions / laws enabling the Reserve Bank of India (‘RBI’) in this regard, RBI being satisfied that it is necessary and expedient in the public interest so to do, hereby, issues the Amendment Directions hereinafter specified.
-
-                            3. These Amendment Directions shall be called the Reserve Bank of India (Non-Banking Financial Companies – Concentration Risk Management) Fourth Amendment Directions, 2026.
-
-                            4. These Amendment Directions shall come into force with immediate effect.
-
-                            5. These Amendment Directions shall modify the Directions as under:
-
-                            (1) After paragraph 39 in ‘Chapter IV - Guidelines Applicable to NBFC – Upper Layer’, a new paragraph 39A shall be inserted as under:
-
-                            39A. The large exposure limits applicable to NBFC-IFC shall also be applicable to IDF-NBFC that are subject to Upper Layer regulations in terms of paragraph 60A of the Reserve Bank of India (Non-Banking Financial Companies – Undertaking of Financial Services) Directions, 2025 read together with paragraph 18 (4) (i) of the Reserve Bank of India (Commercial Banks – Undertaking of Financial Services) Directions, 2025.
-
-                            mentions "applicable to Upper Layer" " After paragraph 39 in ‘Chapter IV - Guidelines Applicable to NBFC – Upper Layer’, a new paragraph 39A shall be inserted as under:
-
-                            39A. The large exposure limits applicable to NBFC-IFC shall also be applicable to IDF-NBFC that are subject to Upper Layer regulations in terms of paragraph 60A of the Reserve Bank of India (Non-Banking Financial Companies – Undertaking of Financial Services) Directions, 2025 read together with paragraph 18 (4) (i) of the Reserve Bank of India (Commercial Banks – Undertaking of Financial Services) Directions, 2025."
-                            return this with the old text
-                            "explanation" (explane new changes and old changes and how it affect things in proper words as described in notification), "actions_required" (actions required by the company to make).
-                            "action_date" ( when to take action mention date or return exact text when the changes is proposed)
-
-                            Profile:
-                            {json.dumps(profile,indent = 2 )}
-                            
-                            Data : 
-                            {json.dumps(json_line,indent = 2 )}
-                            
-                            Retrieved_Data
-                            {combined_text}
-                            """
+                                Profile:
+                                {json.dumps(profile,indent = 2 )}
+                                
+                                Data : 
+                                {json.dumps(json_line,indent = 2 )}
+                                
+                                Retrieved_Data
+                                {combined_text}
+                                """
+                    else:
+                        promt = f"""You are Regulatory compliance agent your task is to take company profile tagged with Profile : and Data : (Which is reserve bank of India Notifications)
+                                and retrieved_data which rag retrieves on basis of notification from vector database made up of rbi master directories your job is to look at the data
+                                and see if the notification is relevant to the company based on the profile if yes then look at the retrieved data to check the context and what changes 
+                                the notification proposes to the master directory based on the below format and if retrieved data is wrong return retrieved data is wrong and changes can be explicatly explained please refer to the link
+                                and also return this statement under "explanation", return effective date as not applicable and return correct_master_dir as tool_calling_off
+                                only return it when it's needed like some notification are general rules that don't need retirveal but the architecture is 
+                                two step retrieval so data always retrieves. 
+                                "title" ( as mentioned in "data")
+                                "link" ( as mentioned in "data")
+                                "explanation" (explane new changes and old changes and how it affect things in proper words as described in notification),
+                                "actions_required" (actions required by the company to make).
+                                "notification_date" (when the notification was issused)
+                                "effective_date" ( when does the notification takes effect in only return when date is mentioned in notification otherwise return not mentioned in notification) 
+                                "retrieval_status" : return -1 ( If incorrect ) or 0  ( if retrieval was not needed ) or 1 (Correct) and numbers only
+                                "correct_master_dir" : Return actual master dir name if retrieval_status is -1 from the notification
+                        
+                                Profile:
+                                {json.dumps(profile,indent = 2 )}                      
+                                
+                                Data : 
+                                {json.dumps(json_line,indent = 2 )}
+                                                        
+                                Retrieved_Data
+                                {combined_text}
+                                """
                             
                     evaluation : ComplianceEvaluation = structured_llm.invoke(promt)
                     

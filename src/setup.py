@@ -64,36 +64,41 @@ splitter = RecursiveCharacterTextSplitter(
     separators=["\n", ". ", " ", ""],
 )
 
-config_template = {
+config_template = {{
     "scraper_settings": {
-        "time_scraper": "",
-        "run_count": ""
+        "time_scraper": 9,
+        "run_count": 1
     },
     "data_check": {
-        "ref_date": "",
-        "delta_ref_date": "",
-        "ref_article": "",
+        "ref_date": "zero",
+        "delta_ref_date": "zero",
+        "ref_article": "zero",
         "ref_file": "",
         "clean_ref_file": "",
         "matched_ref_file": ""
     },
     "Model_Details": {
-        "Embedding_Model": "",
+        "Embedding_Model": "Embedding Gemma-2",
         "Embedding_Model_path": "",
-        "Main_Model": "",
+        "Main_Model": "Gemma 4 E4B 4 Bit Quantization",
         "Main_Model_Path": ""
     },
     "Hyper_Param": {
-        "temperature": "",
-        "top_p": "",
-        "max_tokens": "",
-        "frequency_penalty": "",
-        "presence_penalty": "",
-        "seed": "",
-        "top_k": "",
-        "min_p": "",
-        "repeat_penalty": ""
+        "temperature": 0.7,
+        "top_p": 0.95,
+        "max_tokens": 1024,
+        "frequency_penalty": 0.0,
+        "presence_penalty": 0.0,
+        "seed": 42,
+        "top_k": 64,
+        "min_p": 0.05,
+        "repeat_penalty": 1.1
+    },
+    "misc":{
+        "tool_calling" : "off",
+        "device" : "cuda"
     }
+}
 }
 
 

@@ -14,17 +14,23 @@ profile = os.path.join(script_dir,"..","profile.json")
 import time
 t = time.perf_counter()
 
-def jev_the_builder(description):
-    criteria = {t: "" for t in titles}
-    criteria["none"] = "None of these"
-    
+def jev_the_builder(description):    
     questions = {
         "applies_to_nbfc": {
             "type": "noul",
             "instructions": (
-                "An NBFC is a non-banking financial company registered with the RBI: it lends or invests "
-                "but is not a bank. Commercial banks, co-operative banks, small finance banks and payments banks "
-                "are NOT NBFCs. Is this notification addressed to or applicable to NBFCs?"
+                "Does this RBI notification apply to non-banking financial companies (NBFCs)? "
+                "Answer yes if it is addressed to, or places obligations on, any of these: "
+                "NBFCs of any kind (investment and credit companies, infrastructure finance companies, "
+                "microfinance institutions, factors, peer-to-peer lending platforms, account aggregators, "
+                "infrastructure debt funds), Housing Finance Companies, Core Investment Companies, "
+                "Mortgage Guarantee Companies, or Standalone Primary Dealers. "
+                "Also answer yes if it applies to all RBI-regulated entities or all financial institutions "
+                "without naming NBFCs, such as KYC, AML or sanctions-list (UAPA) notices. "
+                "Answer no if it is addressed only to banks (commercial banks, small finance banks, payments banks, "
+                "regional rural banks, local area banks, urban or rural co-operative banks), All India Financial "
+                "Institutions, Credit Information Companies or Asset Reconstruction Companies, "
+                "even if the text mentions NBFCs in passing, for example as a borrower, counterparty or investee."
             )
         }
     }

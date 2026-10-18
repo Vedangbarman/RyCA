@@ -61,7 +61,7 @@ def match_data(notifications_data):
 
         out_path = os.path.join(file_path, "..","..", "data", "notifications_matched")
         os.makedirs(out_path, exist_ok=True)
-        out_path_json = current_week_file(out_path, format="json")
+        out_path_json = current_week_file(out_path, format="jsonl")
 
         notifications = notifications_data.drop_duplicates(subset="link").copy()
 

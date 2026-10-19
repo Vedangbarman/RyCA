@@ -48,7 +48,6 @@ def get_embeddings():
     )
 
 
-from langchain_community.chat_models import ChatLlamaCpp
 
 @lru_cache(maxsize=1)
 def get_llm():
@@ -170,8 +169,9 @@ class ComplianceEvaluation(BaseModel,):
     explanation : str
     actions_required : str
     effective_date: str = Field(description="The date string formatted exactly as 'ddd, DD MMM YYYY HH:MM:SS' (e.g. 'Mon, 21 Sep 2026 17:25:00')")
-    retrieval_status : int 
+    retrieval_status : Literal[-1, 0, 1, 2]
     correct_master_dir : TITLES
+    master_dir_update : TITLES
 
 
 def retrieve(query, hybrid, k=4):
@@ -201,7 +201,6 @@ def run_batch():
         for line in file_notifications:
             notifications.append(json.loads(line))
 
-    titles = load_titles(path)
     
     in_dir_profile = os.path.abspath(os.path.join(script_dir,"..","profile.json"))
     with open(in_dir_profile, "r", encoding="utf-8") as file_profile:
@@ -216,9 +215,9 @@ def run_batch():
                 
                     results = []
                 
-                    retrieved_data = retrieve(json_line["clean_description"],hybrid) # retireve data 
+                    retrieved_data = retrieve(json_line["clean_description"],watcher_retriever) # retireve data 
                     combined_text = "\n\n".join([doc.page_content for doc in retrieved_data])
-                    recorvered_mds = find_mds(combined_text,titles)
+                    recorvered_mds = find_mds(combined_text,_titles)
                     
                     if recorvered_mds:
                         double_hop_data = double_hop(combined_text, recorvered_mds)
@@ -243,6 +242,7 @@ def run_batch():
                                 "effective_date" ( when does the notification takes effect in only return when date is mentioned in notification otherwise return not mentioned in notification) 
                                 "retrieval_status" : return -1 ( If incorrect ) or 0  ( if retrieval was not needed ) or 1 (Correct) and numbers only return 2 if you can't determine the master directory
                                 "correct_master_dir" : Return actual master dir name if retrieval_status is -1 from the notification
+                                "master_dir_update" : Return name of master directory that the notification ammends if nothing ammeneds return none
 
                                 Profile:
                                 {json.dumps(profile,indent = 2 )}
@@ -269,6 +269,7 @@ def run_batch():
                                 "effective_date" ( when does the notification takes effect in only return when date is mentioned in notification otherwise return not mentioned in notification) 
                                 "retrieval_status" : return -1 ( If incorrect ) or 0  ( if retrieval was not needed ) or 1 (Correct) and numbers only
                                 "correct_master_dir" : Return actual master dir name if retrieval_status is -1 from the notification
+                                "master_dir_update" : Return name of master directory that the notification ammends if nothing ameneds return none
                         
                                 Profile:
                                 {json.dumps(profile,indent = 2 )}                      
@@ -309,6 +310,7 @@ def run_batch():
                                         "effective_date" ( when does the notification takes effect in only return when date is mentioned in notification otherwise return not mentioned in notification) 
                                         "retrieval_status" : return -1 ( If incorrect ) or 0  ( if retrieval was not needed ) or 1 (Correct) and numbers only return 2 if you can't determine the master directory
                                         "correct_master_dir" : Return actual master dir name if retrieval_status is -1 from the notification otherwise return none
+                                        "master_dir_update" : Return name of master directory that the notification ammends if nothing ameneds return none
                                         Profile:
                                         {json.dumps(profile,indent = 2 )}                       
                                         Data : 
@@ -332,8 +334,15 @@ def run_batch():
                             evaluation.explanation = f"The model could not retrieve the correct master direction after {tool_calling_retries} retries, so the data could not be retrieved. Please refer to the link for the full details of this notification."
                             evaluation.actions_required = "Not available. Please refer to the link."
                             evaluation.effective_date = "Not available"   
-                                
-                        
+                    
+                    else:
+                        if evaluation.retrieval_status in (-1,2):
+                            evaluation.explanation = f"The model could not retrieve the correct master direction, the correct could not be generated . Please refer to the link for the full details of this notification."
+                            evaluation.actions_required = "Not available. Please refer to the link."
+                            evaluation.effective_date = "Not available"   
+                                 
+                    if  evaluation.correct_master_dir != "none":
+                        print("Hi")
                     
                     results.append(evaluation.model_dump())
 
@@ -366,7 +375,7 @@ _histories = {}     # chat name -> list of {"role", "content"}
 
 def safe_chat_name(name):
     """The chat name becomes a folder name, so keep only letters, numbers, space, - and _."""
-    return re.sub(r"[^\w\- ]", "", name).strip()[:80] or "gatorade"
+    return re.sub(r"[^\w\- ]", "", name).strip()[:80] or "default"
 
 
 def save_chat(name, messages):
@@ -409,16 +418,16 @@ def chat_job(sid, question, max_turns=6):
     if sid not in _histories:
         _histories[sid] = load_chat(sid)
     hist = _histories[sid]
-    hybrid, titles = get_retriever()
 
     recent_user = [m["content"] for m in hist if m["role"] == "user"][-2:]
     with timer("chat/retrieve"):
-        chunks = retrieve("\n".join(recent_user + [question]), hybrid)
+        chunks = retrieve("\n".join(recent_user + [question]), chat_retriever)
     chunks_text = "\n\n".join(d.page_content for d in chunks)
-
-    if find_mds(chunks_text, titles):
+    
+    mds = find_mds(chunks_text,_titles)
+    if mds:
         with timer("chat/double_hop"):
-            chunks_text = format_docs(chunks + double_hop(chunks_text, titles)[:4])
+            chunks_text = format_docs(chunks + double_hop(chunks_text, mds)[:4])
 
     messages = [SystemMessage(content=SYSTEM_PROMPT.format(context=chunks_text))]
     for m in hist[-2 * max_turns:]:

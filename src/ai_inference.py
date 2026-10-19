@@ -37,9 +37,6 @@ model_path = os.path.abspath(os.path.join(script_dir, "..", "model","google_gemm
 out_dir_chat = os.path.abspath(os.path.join(script_dir, "..", "data", "chat"))
 
 _cache = {}
-
-
-
     
     
 @lru_cache(maxsize=1)
@@ -101,28 +98,68 @@ def load_store(): # load chroma database
         )
 
 
-def build_retriever(): 
-    """ get raw documetns for bm25 and build retriever functions 
-    because if I am calling retrieve function inside loop so having this logic in there means wastage of compute"""
+def build_retriever(type):
+    """ get raw documents for bm25 and build retriever functions
+    because if I am calling retrieve function inside loop so having this logic in there means wastage of compute
+    type here is either "chat" or "watcher" (watcher = run_batch), it decides which settings to read from config.json"""
     cos_store = load_store()
-    data = cos_store.get()                                   # no where=
-    corpus = [
-        Document(page_content=t, metadata={**(m or {}), "chunk_id": i})
-        for t, m, i in zip(data["documents"], data["metadatas"], data["ids"])
-    ]
     K = 2
-    bm25 = BM25Retriever.from_documents(corpus, k=K)
-    dense = cos_store.as_retriever(search_kwargs={"k": K})   # no filter
+
+    # bm25 is the same for chat and watcher so build it only once and reuse it
+    if "bm25" not in _cache:
+        data = cos_store.get()
+        corpus = [
+            Document(page_content=t, metadata={**(m or {}), "chunk_id": i})
+            for t, m, i in zip(data["documents"], data["metadatas"], data["ids"])
+        ]
+        _cache["bm25"] = BM25Retriever.from_documents(corpus, k=K)
+    bm25 = _cache["bm25"]
+
+    in_dir_config = os.path.abspath(os.path.join(script_dir, "..", "config.json"))
+    with open(in_dir_config) as f:
+        config = json.load(f)
+
+    # pick the settings for chat or watcher
+    if type == "chat":
+        settings = config["retrieve_chat"]
+    elif type == "watcher":
+        settings = config["retrieve_watcher"]
+    else:
+        error_store(error_message="Invalid type", trace_back="Not Applicable", time=str(datetime.now(timezone.utc)), error_count="Not Applicable", error_file="ai_inference")
+        raise ValueError(f"Invalid type: {type}")
+
+    filter = settings["filter"]
+    profile = settings["profile"]
+
+    # sources the dense search is allowed to look in
+    if filter == "master_directories":
+        sources = ["directories"]
+    elif filter == "notifications":
+        sources = ["notifications"]
+    elif filter == "both":
+        sources = ["notifications", "directories"]
+    elif filter == "company" or filter == "all":
+        sources = ["notifications", "directories", "company"]
+    else:
+        error_store(error_message="Invalid filter", trace_back="Not Applicable", time=str(datetime.now(timezone.utc)), error_count="Not Applicable", error_file="ai_inference")
+        raise ValueError(f"Invalid filter: {filter}")
+
+    # custom profile also searches the profile chunks
+    if profile == "custom":
+        sources.append("profile")
+    elif profile != "default":
+        error_store(error_message="Invalid profile", trace_back="Not Applicable", time=str(datetime.now(timezone.utc)), error_count="Not Applicable", error_file="ai_inference")
+        raise ValueError(f"Invalid profile: {profile}")
+
+    dense = cos_store.as_retriever(search_kwargs={"k": K, "filter": {"source": {"$in": sources}}})
+
     return EnsembleRetriever(retrievers=[bm25, dense], weights=[0.2, 0.8])
 
+chat_retriever = build_retriever("chat")
+watcher_retriever = build_retriever("watcher")
 
-def get_retriever():
-    if "hybrid" not in _cache:
-        _cache["hybrid"] = build_retriever()
-        _cache["titles"] = load_titles(path)
-    return _cache["hybrid"], _cache["titles"]
+_titles = load_titles(path)
 
-hybrid,_titles = get_retriever()
 TITLES = Literal[(*_titles.values(), "none")]
 class ComplianceEvaluation(BaseModel,):
     """ Confirm schema and datatype of model output
@@ -164,7 +201,7 @@ def run_batch():
         for line in file_notifications:
             notifications.append(json.loads(line))
 
-    hybrid, titles = get_retriever()
+    titles = load_titles(path)
     
     in_dir_profile = os.path.abspath(os.path.join(script_dir,"..","profile.json"))
     with open(in_dir_profile, "r", encoding="utf-8") as file_profile:

@@ -22,7 +22,7 @@ project_root = os.path.abspath(os.path.join(script_dir, ".."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from utils.error_store import error_store  # noqa: E402
+from utils.error_store import error_store  
 
 ids_file = os.path.abspath(os.path.join(script_dir, "..", "data", "setup.txt"))
 master_directory_file = os.path.abspath(os.path.join(script_dir, "..", "data", "master_directory", "master_directory_html.jsonl"))
@@ -97,6 +97,16 @@ config_template = {{
     "misc":{
         "tool_calling" : "off",
         "device" : "cuda"
+    },
+    "retrieve_chat": {
+        "filter": "both",
+        "answer_by_profile": "yes",
+        "profile": "default"
+    },
+    "retrieve_watcher": {
+        "filter": "all",
+        "answer_by_profile": "yes",
+        "profile": "default"
     }
 }
 }

@@ -1,4 +1,5 @@
 import inspect
+import io
 import json
 import math
 import os
@@ -12,6 +13,10 @@ API = os.getenv("API_URL", "http://127.0.0.1:8000")
 # Where the company profile and the agent settings are stored. Point your backend at the same files.
 PROFILE_PATH = os.getenv("PROFILE_PATH", "profile.json")
 CONFIG_PATH = os.getenv("CONFIG_PATH", "config.json")     # config.json in the root of the project
+# The weekly error files live in <project root>/data/error_logs. The project root is the folder
+# that holds config.json.
+ERROR_LOG_DIR = os.getenv("ERROR_LOG_DIR", os.path.join(
+    os.path.dirname(os.path.abspath(CONFIG_PATH)), "data", "error_logs"))
 CHAT_TIMEOUT = 1800        # a chat message waits behind any running notification batch
 DEFAULT_NAME = "gatorade"
 STARTERS = [
@@ -19,8 +24,8 @@ STARTERS = [
     "Which master directions apply to all NBFCs?",
     "What are the large exposure limits for IDF-NBFCs?",
 ]
-CHAT_VIEW, NOTES_VIEW, COMPANY_VIEW, CONFIG_VIEW = (
-    "Chat", "Notifications", "Company details", "Agent configuration")
+CHAT_VIEW, NOTES_VIEW, COMPANY_VIEW, CONFIG_VIEW, ERRORS_VIEW = (
+    "Chat", "Notifications", "Company details", "Agent configuration", "Error logs")
 
 st.set_page_config(page_title="RBI Compliance Assistant", layout="wide")
 
@@ -150,7 +155,7 @@ with st.sidebar:
     )
     sidebar_stats()
     st.divider()
-    view = st.radio("View", [CHAT_VIEW, NOTES_VIEW, COMPANY_VIEW, CONFIG_VIEW],
+    view = st.radio("View", [CHAT_VIEW, NOTES_VIEW, COMPANY_VIEW, CONFIG_VIEW, ERRORS_VIEW],
                     label_visibility="collapsed")
 
     if view == CHAT_VIEW:
@@ -272,17 +277,11 @@ def notifications_panel():
 CATEGORIES = ["NBFC-ICC", "NBFC-MFI", "NBFC-Factor", "NBFC-IFC", "NBFC-IDF",
               "NBFC-AA", "NBFC-P2P", "NBFC-CIC", "NBFC-MGC"]
 ENTITY_TYPES = ["NBFC", "HFC", "ARC", "other"]
-LAYERS = ["BASE", "MIDDLE", "UPPER", "TOP"]
+LAYERS = ["BASE", "MIDDLE", "UPPER", "TOP"]       # lowest to highest
 LEGACY = ["NBFC-D", "NBFC-ND", "NBFC-ND-SI"]
 COR_STATUS = ["active", "suspended", "cancelled", "surrendered"]
-COMPANY_TYPES = ["public_limited", "private_limited", "other"]
-FDI_ROUTES = ["automatic", "government", "not_applicable"]
-CORE_SYSTEMS = ["in_house", "vendor", "hybrid"]
 SECURITISATION_ROLES = ["originator", "investor", "servicer"]
 CUSTOMER_TYPES = ["MSME", "salaried", "self_employed", "retail", "corporate", "agriculture"]
-COMMITTEES = ["audit", "nomination_and_remuneration", "risk_management", "it_strategy",
-              "asset_liability_management", "credit_approval",
-              "stakeholders_relationship", "corporate_social_responsibility"]
 OUTSOURCED = ["collections", "kyc_verification", "customer_support", "cloud_hosting",
               "loan_origination", "credit_underwriting", "it_operations"]
 FUNDING_TYPES = ["bank_term_loans", "listed_ncd", "unlisted_ncd", "commercial_paper",
@@ -293,10 +292,7 @@ PRODUCT_TYPES = ["loan_against_property", "vehicle_finance", "personal_loan_unse
                  "home_loan", "business_loan_unsecured", "microfinance_loan",
                  "loan_against_securities", "education_loan", "supply_chain_finance",
                  "factoring", "infrastructure_loan", "other"]
-COLLATERAL_TYPES = ["immovable_property", "vehicle", "gold_jewellery", "securities",
-                    "receivables", "plant_and_machinery", "other"]
 EXPORT_IMPORT = ["none", "exports", "imports", "both"]
-AD_CATEGORIES = ["none", "AD-I", "AD-II", "AD-III"]
 STATES = [
     "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat",
     "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh",
@@ -307,74 +303,12 @@ STATES = [
     "Lakshadweep", "Puducherry",
 ]
 
-ACTIVITY_FLAGS = {
-    "gold_loans": ("Gold loans", "Lends against gold jewellery or ornaments."),
-    "microfinance": ("Microfinance", "Gives small loans to low-income households."),
-    "housing_finance": ("Housing finance", "Gives home loans or other housing finance."),
-    "factoring": ("Factoring", "Buys receivables or runs a factoring business."),
-    "infrastructure_financing": ("Infrastructure financing", "Finances infrastructure projects."),
-    "loans_against_securities": ("Loans against securities",
-                                 "Lends against shares, mutual funds or other securities."),
-    "digital_lending": ("Digital lending",
-                        "Gives loans through apps or online platforms, on your own or through partners."),
-    "co_lending": ("Co-lending", "Lends jointly with a bank or another regulated lender."),
-    "securitisation_or_assignment": ("Securitisation or assignment",
-                                     "Sells or buys loan pools through securitisation or direct assignment."),
-    "insurance_distribution": ("Insurance distribution",
-                               "Sells insurance products as a corporate agent or broker."),
-    "peer_to_peer": ("Peer-to-peer lending", "Runs a P2P lending platform."),
-    "account_aggregator": ("Account aggregator", "Works as an RBI-licensed account aggregator."),
-    "forex_or_cross_border": ("Forex or cross-border", "Has foreign exchange or cross-border business."),
-}
-
-KEY_OFFICERS = {
-    "cfo": ("Chief Financial Officer", "A CFO is appointed."),
-    "company_secretary": ("Company Secretary", "A company secretary is appointed."),
-    "chief_compliance_officer": ("Chief Compliance Officer", "A compliance head is appointed."),
-    "chief_risk_officer": ("Chief Risk Officer", "A risk head is appointed."),
-    "ciso": ("Chief Information Security Officer", "A CISO is appointed."),
-    "principal_officer_pmla": ("Principal Officer (PMLA)",
-                               "Principal Officer appointed under the anti-money-laundering rules."),
-    "designated_director_pmla": ("Designated Director (PMLA)",
-                                 "Designated Director appointed under the anti-money-laundering rules."),
-}
-
-PRODUCT_COLS = ["product_type", "share_of_aum_percent", "secured", "collateral_type",
-                "customer_segment", "digitally_originated", "co_lent"]
-
-# The profile keeps a few facts in two places: the short sections the agent matches on first
-# (match_keys, gates, relevance) and the detailed sections. Each fact is asked for once in the
-# form and saved to both places, so the two never disagree.
-MIRRORS = {
-    "identity.legal_name": ["match_keys.legal_name"],
-    "identity.rbi_certificate_of_registration_no": ["match_keys.rbi_certificate_of_registration_no"],
-    "identity.cor_status": ["match_keys.cor_status"],
-    "regulatory_classification.nbfc_category": ["gates.nbfc_category"],
-    "regulatory_classification.secondary_categories": ["gates.secondary_categories"],
-    "regulatory_classification.layer": ["gates.layer"],
-    "regulatory_classification.is_deposit_taking": ["gates.is_deposit_taking"],
-    "regulatory_classification.accesses_public_funds": ["gates.accesses_public_funds"],
-    "regulatory_classification.has_customer_interface": ["gates.has_customer_interface"],
-    "regulatory_classification.is_government_owned": ["gates.is_government_owned"],
-    "regulatory_classification.exemptions_claimed": ["gates.exemptions_claimed"],
-    "size_and_financials.total_assets": ["gates.total_assets_crore"],
-    "size_and_financials.group_aggregate_nbfc_assets": ["gates.group_aggregate_nbfc_assets_crore"],
-    "ownership_and_group.is_subsidiary_of_bank": ["gates.is_subsidiary_of_bank"],
-    "ownership_and_group.foreign_holding_percent": ["relevance.cross_border.foreign_holding_percent"],
-    "funding.has_foreign_borrowing_ecb": ["relevance.cross_border.has_foreign_borrowing_ecb"],
-    "business_profile.lending_products": ["relevance.lending_products"],
-    "business_profile.securitisation_role": ["relevance.other_activities.securitisation_roles"],
-    "business_profile.activity_flags.insurance_distribution":
-        ["relevance.other_activities.insurance_distribution"],
-    "customer_and_network.uses_recovery_agents": ["relevance.other_activities.uses_recovery_agents"],
-    "it_and_outsourcing.outsourced_functions": ["relevance.other_activities.outsourced_functions"],
-    "digital_lending.offers_digital_loans": ["relevance.digital_lending.offers_digital_loans"],
-    "digital_lending.uses_lending_service_providers":
-        ["relevance.digital_lending.uses_lending_service_providers"],
-    "digital_lending.uses_default_loss_guarantee":
-        ["relevance.digital_lending.uses_default_loss_guarantee"],
-}
-MISSING = object()
+# columns of the lending products table, in the order they appear in the profile
+PRODUCT_COLS = ["product_type", "secured", "customer_segment", "share_of_aum_percent",
+                "digitally_originated", "co_lent"]
+EVENT_COLS = ["name", "relevant_if", "currently_relevant"]
+TRI_TO_LABEL = {None: "Unknown", True: "Yes", False: "No"}
+LABEL_TO_TRI = {"Yes": True, "No": False}
 
 
 def load_profile():
@@ -391,44 +325,12 @@ def save_profile(profile):
 
 
 def g(d, path, default=None):
-    """Read a nested value like g(p, 'identity.legal_name')."""
+    """Read a nested value like g(p, 'gates.layer'). A missing or null value gives the default."""
     for k in path.split("."):
         if not isinstance(d, dict) or d.get(k) is None:
             return default
         d = d[k]
     return d
-
-
-def rd(p, path, default=None):
-    """Read a profile value. If it is empty, use the same fact from its other place in the file."""
-    for q in (path, *MIRRORS.get(path, ())):
-        v = g(p, q)
-        if v is not None and v != [] and v != "":
-            return v
-    return default
-
-
-def put(d, path, value):
-    *parents, last = path.split(".")
-    for k in parents:
-        d = d.setdefault(k, {})
-    d[last] = value
-
-
-def peek(d, path):
-    for k in path.split("."):
-        if not isinstance(d, dict) or k not in d:
-            return MISSING
-        d = d[k]
-    return d
-
-
-def sync_mirrors(new):
-    for src, dsts in MIRRORS.items():
-        v = peek(new, src)
-        if v is not MISSING:
-            for dst in dsts:
-                put(new, dst, v)
 
 
 # --- input helpers. Each returns None for "unknown" so the agent can tell it apart from "no".
@@ -437,8 +339,12 @@ def txt(label, val, help):
     return st.text_input(label, value=val or "", help=help).strip() or None
 
 
-def lines(label, val, help):
-    raw = st.text_area(label, value="\n".join(val or []), help=help + " One per line.", height=100)
+def area(label, val, help, height=80):
+    return st.text_area(label, value=val or "", help=help, height=height).strip() or None
+
+
+def lines(label, val, help, height=100):
+    raw = st.text_area(label, value="\n".join(val or []), help=help + " One per line.", height=height)
     return [x.strip() for x in raw.splitlines() if x.strip()]
 
 
@@ -453,7 +359,7 @@ def date_txt(label, val, help, errors):
     return raw
 
 
-def num(label, val, help, errors, integer=False):
+def num(label, val, help, errors, integer=False, lo=None, hi=None):
     raw = st.text_input(label, value="" if val is None else str(val), help=help)
     raw = raw.strip().replace(",", "")
     if not raw:
@@ -464,6 +370,12 @@ def num(label, val, help, errors, integer=False):
             raise ValueError
     except ValueError:
         errors.append(f"{label}: enter {'a whole number' if integer else 'a number'} or leave it blank.")
+        return val
+    if lo is not None and n < lo:
+        errors.append(f"{label}: must be {lo:g} or more.")
+        return val
+    if hi is not None and n > hi:
+        errors.append(f"{label}: must be {hi:g} or less.")
         return val
     return int(n) if integer or n.is_integer() else n
 
@@ -506,17 +418,57 @@ def table(rows, columns, config):
     return out
 
 
-def split_csv(s):
-    return [x.strip() for x in str(s or "").split(",") if x.strip()]
+def profile_warnings(new):
+    """Answers that contradict each other. These do not stop the save, they are shown after it."""
+    gates, rel = new["gates"], new["relevance"]
+    products = rel["lending_products"]
+    funding = rel["funding_instruments"]
+    digital, co = rel["digital_lending"], rel["co_lending"]
+    ecb = rel["cross_border"]["has_foreign_borrowing_ecb"]
+    out = []
 
+    share = sum(r.get("share_of_aum_percent") or 0 for r in products)
+    if products and abs(share - 100) > 0.5:
+        out.append(f"Product shares add up to {share:g}%, not 100%.")
 
-def unique(rows, col):
-    return list(dict.fromkeys(r[col] for r in rows if r.get(col)))
+    layer, applicable = gates["layer"], gates["applicable_layers"]
+    if layer in LAYERS:
+        usual = LAYERS[:LAYERS.index(layer) + 1]
+        if set(applicable) != set(usual):
+            out.append(f"The layer is {layer} but the applicable layers are "
+                       f"{', '.join(applicable) or 'empty'}. Lower-layer rules usually carry upward, "
+                       f"so the usual list is {', '.join(usual)}.")
+
+    total, group = gates["total_assets_crore"], gates["group_aggregate_nbfc_assets_crore"]
+    if total is not None and group is not None and group < total:
+        out.append("Group NBFC assets are lower than total assets, but the group figure includes "
+                   "this company.")
+
+    if "public_deposits" in funding and gates["is_deposit_taking"] is not True:
+        out.append("Public deposits are listed as a funding source but \"Takes public deposits\" "
+                   "is not Yes.")
+    if "ecb" in funding and ecb is not True:
+        out.append("ECB is listed as a funding source but \"Foreign borrowing (ECB)\" is not Yes.")
+    if ecb is True and "ecb" not in funding:
+        out.append("\"Foreign borrowing (ECB)\" is Yes but ECB is not listed as a funding source.")
+
+    flagged = {r["product_type"] for r in products if r.get("co_lent") and r.get("product_type")}
+    if co["active"] is False and (flagged or co["products"] or co["partner_types"]):
+        out.append("Co-lending is marked not active, but co-lent products or partners are listed.")
+    elif flagged != set(co["products"]):
+        out.append("The products marked Co-lent on the Business tab differ from the co-lent products "
+                   "on the Digital and co-lending tab.")
+
+    if digital["offers_digital_loans"] is False and (
+            digital["has_own_lending_app"] is True or any(r.get("digitally_originated") for r in products)):
+        out.append("\"Offers digital loans\" is No, but there is a lending app or a digitally "
+                   "originated product.")
+    return out
 
 
 def company_view():
     p = load_profile()
-    errors, warnings = [], []
+    errors = []
 
     st.header("Company details")
     st.markdown(
@@ -547,151 +499,188 @@ def company_view():
                     st.rerun()
 
     new = {}
+    rel = {}
+    new["relevance"] = rel
     with st.form("company_form"):
-        (t_id, t_cls, t_size, t_biz, t_fund, t_dig, t_net, t_own, t_gov, t_it,
-         t_pay, t_sup, t_other) = st.tabs([
-            "Identity", "Classification", "Size", "Business", "Funding", "Digital lending",
-            "Network", "Ownership", "Governance", "IT and outsourcing",
-            "Payments and cross-border", "Supervisory", "Other"])
+        t_id, t_cls, t_dir, t_biz, t_dig, t_fund = st.tabs([
+            "Identity", "Classification", "Applicable directions", "Business",
+            "Digital and co-lending", "Funding and cross-border"])
 
         # ----- Identity -----
         with t_id:
             st.subheader("Profile")
-            schema = rd(p, "profile_meta.schema_version")
+            schema = g(p, "profile_meta.schema_version")
             if schema:
                 st.caption(f"Profile format version {schema}.")
             a, b = st.columns(2)
             with a:
-                profile_id = txt("Profile ID", rd(p, "profile_meta.profile_id"),
+                profile_id = txt("Profile ID", g(p, "profile_meta.profile_id"),
                                  "A short label for this profile, for example NBFC-DEMO-0001.")
-                as_of = date_txt("Figures as of", rd(p, "profile_meta.as_of_date"),
-                                 "Date the financial figures are taken from, usually the last balance sheet date.",
-                                 errors)
-                fy = txt("Financial year", rd(p, "profile_meta.financial_year"), "For example FY2025-26.")
-            with b:
-                source = txt("Data source", rd(p, "profile_meta.data_source"),
-                             "Where these details come from, for example audited financials and the RBI "
-                             "Certificate of Registration.")
-                verified = date_txt("Last verified on", rd(p, "profile_meta.last_verified_on"),
+                as_of = date_txt("Figures as of", g(p, "profile_meta.as_of_date"),
+                                 "Date the financial figures are taken from, usually the last balance "
+                                 "sheet date.", errors)
+                verified = date_txt("Last verified on", g(p, "profile_meta.last_verified_on"),
                                     "Date someone last checked these details against the source.", errors)
-                demo = st.checkbox("This is demo data", value=bool(rd(p, "profile_meta.is_demo_data", False)),
+            with b:
+                framework = txt("Regulatory framework", g(p, "profile_meta.framework"),
+                                "The set of RBI directions this profile was prepared against, for "
+                                "example RBI NBFC Directions 2025.")
+                demo = st.checkbox("This is demo data", value=bool(g(p, "profile_meta.is_demo_data", False)),
                                    help="Tick this if the company is made up for testing.")
-            new["profile_meta"] = {"profile_id": profile_id, "as_of_date": as_of, "financial_year": fy,
-                                   "data_source": source, "last_verified_on": verified,
-                                   "is_demo_data": demo}
+            new["profile_meta"] = {"profile_id": profile_id, "as_of_date": as_of, "last_verified_on": verified,
+                                   "is_demo_data": demo, "framework": framework}
 
             st.subheader("Company")
             a, b = st.columns(2)
             with a:
-                legal = txt("Legal name", rd(p, "identity.legal_name"), "Registered name of the company.")
+                legal = txt("Legal name", g(p, "match_keys.legal_name"), "Registered name of the company.")
                 cor_no = txt("RBI Certificate of Registration no.",
-                             rd(p, "identity.rbi_certificate_of_registration_no"),
+                             g(p, "match_keys.rbi_certificate_of_registration_no"),
                              "Number on your RBI Certificate of Registration, for example N-14.00000.")
-                reg_date = date_txt("RBI registration date", rd(p, "identity.rbi_registration_date"),
-                                    "Date the RBI registered you as an NBFC.", errors)
-                state = pick("Registered office state", STATES, rd(p, "identity.registered_office_state"),
-                             "State where the registered office is located.")
             with b:
-                cor_status = pick("Certificate status", COR_STATUS, rd(p, "identity.cor_status"),
+                cor_status = pick("Certificate status", COR_STATUS, g(p, "match_keys.cor_status"),
                                   "Current status of your Certificate of Registration.")
-                ctype = pick("Company type", COMPANY_TYPES, rd(p, "identity.company_type"),
-                             "How the company is incorporated.")
-                listed_eq = tri("Equity shares listed", rd(p, "identity.is_listed_equity"),
-                                "Whether your equity shares trade on a stock exchange.")
-            new["identity"] = {"legal_name": legal, "rbi_certificate_of_registration_no": cor_no,
-                               "rbi_registration_date": reg_date, "cor_status": cor_status,
-                               "company_type": ctype, "is_listed_equity": listed_eq,
-                               "registered_office_state": state}
+                state = pick("Registered office state", STATES, g(p, "match_keys.registered_office_state"),
+                             "State where the registered office is located.")
+            new["match_keys"] = {"legal_name": legal, "rbi_certificate_of_registration_no": cor_no,
+                                 "cor_status": cor_status, "registered_office_state": state}
 
         # ----- Classification -----
         with t_cls:
-            st.caption("This decides which RBI directions cover you, so it matters most. "
-                       "These answers are saved in both the classification and the gates sections "
-                       "of the profile.")
+            st.caption("This decides which RBI directions cover you, so it matters most.")
+            st.subheader("Category and layer")
             a, b = st.columns(2)
             with a:
-                entity = pick("Entity type", ENTITY_TYPES, rd(p, "gates.entity_type"),
+                entity = pick("Entity type", ENTITY_TYPES, g(p, "gates.entity_type"),
                               "The kind of regulated entity. NBFC for a non-banking financial company.")
-                cat = pick("NBFC category", CATEGORIES, rd(p, "regulatory_classification.nbfc_category"),
+                cat = pick("NBFC category", CATEGORIES, g(p, "gates.nbfc_category"),
                            "Your main category as stated on the Certificate of Registration.")
-                sec = multi("Other categories", CATEGORIES,
-                            rd(p, "regulatory_classification.secondary_categories"),
+                sec = multi("Other categories", CATEGORIES, g(p, "gates.secondary_categories"),
                             "Any additional categories you are registered under.")
-                legacy = pick("Older classification", LEGACY,
-                              rd(p, "regulatory_classification.legacy_classification"),
-                              "The pre-2022 label. Older circulars still use it, for example NBFC-ND-SI.")
-                layer = pick("Layer", LAYERS, rd(p, "regulatory_classification.layer"),
+                legacy = multi("Older terms", LEGACY, g(p, "gates.legacy_terms"),
+                               "Pre-2022 labels that older circulars still use, for example NBFC-ND-SI.")
+            with b:
+                layer = pick("Layer", LAYERS, g(p, "gates.layer"),
                              "Layer under RBI's scale-based regulation. For example, a non-deposit-taking "
                              "ICC with assets of Rs 1,000 crore or more is in the Middle Layer.")
-                exemptions = lines("Exemptions claimed", rd(p, "regulatory_classification.exemptions_claimed"),
-                                   "Any RBI exemptions you rely on.")
-            with b:
-                dep = tri("Takes public deposits", rd(p, "regulatory_classification.is_deposit_taking"),
-                          "Whether you accept public deposits.")
-                sysimp = tri("Systemically important", rd(p, "regulatory_classification.is_systemically_important"),
-                             "Whether RBI treats you as systemically important based on asset size.")
-                hfc = tri("Housing finance company", rd(p, "regulatory_classification.is_housing_finance_company"),
-                          "Whether you are registered as a housing finance company.")
-                cic = tri("Core investment company", rd(p, "regulatory_classification.is_core_investment_company"),
-                          "Whether you are a core investment company.")
-                govt = tri("Government owned", rd(p, "regulatory_classification.is_government_owned"),
-                           "Whether the government owns you. Some circulars exclude these.")
-                pubfunds = tri("Accesses public funds", rd(p, "regulatory_classification.accesses_public_funds"),
-                               "Whether you raise money from the public, for example through debentures.")
-                cust = tri("Has customer interface", rd(p, "regulatory_classification.has_customer_interface"),
-                           "Whether you deal directly with customers.")
-            new["regulatory_classification"] = {
-                "nbfc_category": cat, "secondary_categories": sec, "legacy_classification": legacy,
-                "layer": layer, "is_deposit_taking": dep, "is_systemically_important": sysimp,
-                "is_housing_finance_company": hfc, "is_core_investment_company": cic,
-                "is_government_owned": govt, "accesses_public_funds": pubfunds,
-                "has_customer_interface": cust, "exemptions_claimed": exemptions}
-            put(new, "gates.entity_type", entity)
+                layer_label = txt("Layer label", g(p, "gates.layer_label"),
+                                  "Short form of the layer, for example NBFC-ML for the Middle Layer.")
+                layer_basis = txt("Why this layer", g(p, "gates.layer_basis"),
+                                  "One line on how the layer was decided, for example non-deposit-taking "
+                                  "with total assets of Rs 1,000 crore or more.")
+                applicable_layers = multi("Layers whose notifications apply", LAYERS,
+                                          g(p, "gates.applicable_layers"),
+                                          "Notifications written for these layers apply to you. Lower-layer "
+                                          "rules usually carry upward, so a Middle Layer company lists "
+                                          "Base and Middle.")
+            layer_note = area("Layer note", g(p, "gates.layer_note"),
+                              "Free text explaining how layers apply to this company.")
 
-        # ----- Size -----
-        with t_size:
-            st.caption("All amounts in Rs crore. Many circulars apply only above a size threshold.")
+            st.subheader("Status")
             a, b = st.columns(2)
             with a:
-                ta = num("Total assets", rd(p, "size_and_financials.total_assets"),
-                         "Total assets on the balance sheet.", errors)
-                aum = num("Assets under management", rd(p, "size_and_financials.assets_under_management"),
-                          "On-book assets plus assets you manage off the books.", errors)
-                obs = num("Off-balance-sheet exposure", rd(p, "size_and_financials.off_balance_sheet_exposure"),
-                          "Exposure that does not appear on the balance sheet.", errors)
+                dep = tri("Takes public deposits", g(p, "gates.is_deposit_taking"),
+                          "Whether you accept public deposits.")
+                pubfunds = tri("Accesses public funds", g(p, "gates.accesses_public_funds"),
+                               "Whether you raise money from the public, for example through debentures.")
+                cust = tri("Has customer interface", g(p, "gates.has_customer_interface"),
+                           "Whether you deal directly with customers.")
             with b:
-                grp = num("Group NBFC assets (total)", rd(p, "size_and_financials.group_aggregate_nbfc_assets"),
-                          "Combined assets of all NBFCs in your group, including this one.", errors)
-                nof = num("Net owned fund", rd(p, "size_and_financials.net_owned_fund"),
-                          "Net owned fund as defined by RBI.", errors)
-                borr = num("Total borrowings", rd(p, "size_and_financials.total_borrowings"),
-                           "All borrowings outstanding.", errors)
-            new["size_and_financials"] = {
-                "currency": "INR", "unit": "crore", "total_assets": ta, "assets_under_management": aum,
-                "off_balance_sheet_exposure": obs, "group_aggregate_nbfc_assets": grp,
-                "net_owned_fund": nof, "total_borrowings": borr}
+                govt = tri("Government owned", g(p, "gates.is_government_owned"),
+                           "Whether the government owns you. Some circulars exclude these.")
+                bank_sub = tri("Subsidiary of a bank", g(p, "gates.is_subsidiary_of_bank"),
+                               "Whether a bank owns you.")
+                exemptions = lines("Exemptions claimed", g(p, "gates.exemptions_claimed"),
+                                   "Any RBI exemptions you rely on.")
+
+            st.subheader("Size")
+            st.caption("Amounts in Rs crore. Many circulars apply only above a size threshold.")
+            a, b = st.columns(2)
+            with a:
+                ta = num("Total assets (Rs crore)", g(p, "gates.total_assets_crore"),
+                         "Total assets on the balance sheet.", errors, lo=0)
+            with b:
+                grp = num("Group NBFC assets (Rs crore)", g(p, "gates.group_aggregate_nbfc_assets_crore"),
+                          "Combined assets of all NBFCs in your group, including this one.", errors, lo=0)
+
+            st.subheader("Does not apply to you")
+            st.caption("Notifications aimed only at these do not apply to you.")
+            a, b = st.columns(2)
+            with a:
+                na_cats = lines("Categories that do not apply", g(p, "gates.not_applicable_categories"),
+                                "NBFC types you are not, for example NBFC-MFI or CIC.", height=220)
+            with b:
+                na_exempt = lines("Exempt entity types that do not apply",
+                                  g(p, "gates.not_applicable_exempt_entities"),
+                                  "Kinds of exempt entities you are not, for example insurance companies "
+                                  "or stock brokers.", height=220)
+            new["gates"] = {
+                "entity_type": entity, "nbfc_category": cat, "secondary_categories": sec,
+                "layer": layer, "layer_label": layer_label, "layer_basis": layer_basis,
+                "applicable_layers": applicable_layers, "layer_note": layer_note,
+                "legacy_terms": legacy, "is_deposit_taking": dep, "accesses_public_funds": pubfunds,
+                "has_customer_interface": cust, "is_government_owned": govt,
+                "is_subsidiary_of_bank": bank_sub, "exemptions_claimed": exemptions,
+                "total_assets_crore": ta, "group_aggregate_nbfc_assets_crore": grp,
+                "not_applicable_categories": na_cats, "not_applicable_exempt_entities": na_exempt}
+
+        # ----- Applicable directions -----
+        with t_dir:
+            st.caption("Which RBI directions cover this company: the ones for all NBFCs, the ones "
+                       "written for its category, and the ones that apply only when something happens.")
+            a, b = st.columns(2)
+            with a:
+                title_pattern = txt("Direction title pattern", g(p, "applicable_directions.title_pattern"),
+                                    "How the directions are titled. {name} stands for the name of one direction.")
+            with b:
+                source = txt("Source circular", g(p, "applicable_directions.source"),
+                             "The RBI circular and paragraphs these lists come from.")
+            all_nbfc = lines("Directions that apply to all NBFCs", g(p, "applicable_directions.apply_to_all_nbfcs"),
+                             "The name of each direction.", height=320)
+            a, b = st.columns(2)
+            with a:
+                type_specific = lines("Directions for your category only",
+                                      g(p, "applicable_directions.type_specific"),
+                                      "Directions written only for your NBFC category. Leave empty if there are none.")
+            with b:
+                type_note = area("Note on category-specific directions",
+                                 g(p, "applicable_directions.type_specific_note"),
+                                 "For example, why the list above is empty.", height=100)
+
+            st.markdown("**Event or activity driven directions**")
+            st.caption("Directions that apply only when something happens or you do something. "
+                       "\"Currently relevant\" says whether that is true right now.")
+            ev_rows = []
+            for r in g(p, "applicable_directions.event_or_activity_driven", []):
+                r = dict(r)
+                r["currently_relevant"] = TRI_TO_LABEL.get(r.get("currently_relevant"), "Unknown")
+                ev_rows.append(r)
+            events = table(ev_rows, EVENT_COLS, {
+                "name": st.column_config.TextColumn("Direction"),
+                "relevant_if": st.column_config.TextColumn("Relevant if"),
+                "currently_relevant": st.column_config.SelectboxColumn(
+                    "Currently relevant", options=["Unknown", "Yes", "No"]),
+            })
+            for r in events:
+                r["currently_relevant"] = LABEL_TO_TRI.get(r.get("currently_relevant"))
+            new["applicable_directions"] = {
+                "title_pattern": title_pattern, "source": source, "type_specific": type_specific,
+                "type_specific_note": type_note, "apply_to_all_nbfcs": all_nbfc,
+                "event_or_activity_driven": events}
 
         # ----- Business -----
         with t_biz:
-            primary = txt("Main business", rd(p, "business_profile.primary_activity"),
-                          "One line on what you mainly do, for example secured MSME and vehicle lending.")
             st.markdown("**Lending products**")
             st.caption("One row per product. Add rows with the + at the bottom of the table. "
                        "Shares of assets under management should add up to 100.")
-            prod_rows = []
-            for r in rd(p, "business_profile.lending_products", []):
-                r = dict(r)
-                r.setdefault("product_type", r.get("product"))     # older files call it "product"
-                prod_rows.append(r)
+            prod_rows = g(p, "relevance.lending_products", [])
             products = table(prod_rows, PRODUCT_COLS, {
                 "product_type": st.column_config.SelectboxColumn(
                     "Product", options=with_existing(PRODUCT_TYPES, prod_rows, "product_type")),
-                "share_of_aum_percent": st.column_config.NumberColumn("% of AUM", min_value=0, max_value=100),
                 "secured": st.column_config.CheckboxColumn("Secured"),
-                "collateral_type": st.column_config.SelectboxColumn(
-                    "Collateral", options=with_existing(COLLATERAL_TYPES, prod_rows, "collateral_type")),
                 "customer_segment": st.column_config.SelectboxColumn(
                     "Segment", options=with_existing(CUSTOMER_TYPES, prod_rows, "customer_segment")),
+                "share_of_aum_percent": st.column_config.NumberColumn("% of AUM", min_value=0, max_value=100),
                 "digitally_originated": st.column_config.CheckboxColumn(
                     "Digital", help="Loans are originated through an app or online."),
                 "co_lent": st.column_config.CheckboxColumn(
@@ -700,227 +689,97 @@ def company_view():
             for r in products:
                 for k in ("secured", "digitally_originated", "co_lent"):
                     r[k] = bool(r.get(k))
-            share = sum(r.get("share_of_aum_percent") or 0 for r in products)
-            if products and abs(share - 100) > 0.5:
-                warnings.append(f"Product shares add up to {share:g}%, not 100%.")
+            rel["lending_products"] = products
 
-            st.markdown("**Activities**")
-            st.caption("Whether you do each of these. Many circulars apply only to firms with a given activity.")
-            flags = {}
-            cols = st.columns(2)
-            for i, (key, (label, help_)) in enumerate(ACTIVITY_FLAGS.items()):
-                with cols[i % 2]:
-                    flags[key] = tri(label, rd(p, f"business_profile.activity_flags.{key}"), help_)
-            roles = multi("Securitisation role", SECURITISATION_ROLES,
-                          rd(p, "business_profile.securitisation_role"),
-                          "Which side of securitisation or assignment deals you are on.")
-            new["business_profile"] = {"primary_activity": primary, "lending_products": products,
-                                       "activity_flags": flags, "securitisation_role": roles}
-
-        # ----- Funding -----
-        with t_fund:
+            st.markdown("**Other activities**")
             a, b = st.columns(2)
             with a:
-                dep_out = num("Public deposits outstanding (Rs crore)", rd(p, "funding.public_deposits_outstanding"),
-                              "Public deposits you currently hold. Enter 0 if none.", errors)
-                listed = tri("Listed debt securities", rd(p, "funding.listed_debt_securities"),
-                             "Whether you have debentures or bonds listed on an exchange. "
-                             "This is what brings SEBI listing rules in.")
+                roles = multi("Securitisation role", SECURITISATION_ROLES,
+                              g(p, "relevance.other_activities.securitisation_roles"),
+                              "Which side of securitisation or assignment deals you are on. "
+                              "Leave empty if you do none.")
+                insurance = tri("Insurance distribution", g(p, "relevance.other_activities.insurance_distribution"),
+                                "Whether you sell insurance products as a corporate agent or broker.")
             with b:
-                ecb = tri("Foreign borrowing (ECB)", rd(p, "funding.has_foreign_borrowing_ecb"),
-                          "Whether you have external commercial borrowings.")
-            st.markdown("**Sources of funds**")
-            st.caption("Pick every source you borrow from. The share of total borrowings is optional, "
-                       "but if you fill it in it should add up to 100.")
-            src_rows = rd(p, "funding.sources") or [
-                {"type": t} for t in rd(p, "relevance.funding_instruments", [])]
-            sources = table(src_rows, ["type", "share_percent"], {
-                "type": st.column_config.SelectboxColumn(
-                    "Source", options=with_existing(FUNDING_TYPES, src_rows, "type")),
-                "share_percent": st.column_config.NumberColumn("% of borrowings", min_value=0, max_value=100),
-            })
-            shares = [r["share_percent"] for r in sources if r.get("share_percent") is not None]
-            if shares and abs(sum(shares) - 100) > 0.5:
-                warnings.append(f"Funding shares add up to {sum(shares):g}%, not 100%.")
-            new["funding"] = {"public_deposits_outstanding": dep_out, "listed_debt_securities": listed,
-                              "has_foreign_borrowing_ecb": ecb, "sources": sources}
-            put(new, "relevance.funding_instruments", unique(sources, "type"))
-
-        # ----- Digital lending -----
-        with t_dig:
-            st.caption("Covers the RBI Digital Lending Directions: apps, partners and guarantees.")
-            a, b = st.columns(2)
-            with a:
-                offers = tri("Offers digital loans", rd(p, "digital_lending.offers_digital_loans"),
-                             "Whether you give loans through digital channels.")
-                has_app = tri("Has its own lending app", rd(p, "relevance.digital_lending.has_own_lending_app"),
-                              "Whether you run a lending app under your own name.")
-                uses_lsp = tri("Uses lending service providers", rd(p, "digital_lending.uses_lending_service_providers"),
-                               "Whether third parties help you source, underwrite or collect on loans.")
-                lsp_n = num("Number of lending service providers", rd(p, "digital_lending.lsp_count"),
-                            "How many such partners you work with.", errors, integer=True)
-            with b:
-                dlg = tri("Uses default loss guarantee", rd(p, "digital_lending.uses_default_loss_guarantee"),
-                          "Whether a partner guarantees you against loan losses.")
-                co_active = tri("Co-lending active", rd(p, "digital_lending.co_lending.active"),
-                                "Whether you currently co-lend with another lender.")
-            st.markdown("**Your lending apps**")
-            st.caption("Platforms is a comma-separated list, for example android, ios.")
-            app_rows = [{"name": a_.get("name"), "platforms": ", ".join(a_.get("platforms") or [])}
-                        for a_ in rd(p, "digital_lending.own_lending_apps", [])]
-            apps = table(app_rows, ["name", "platforms"], {
-                "name": st.column_config.TextColumn("App name"),
-                "platforms": st.column_config.TextColumn("Platforms")})
-            for r in apps:
-                r["platforms"] = split_csv(r.get("platforms"))
-            st.markdown("**Co-lending partners**")
-            partner_rows = rd(p, "digital_lending.co_lending.partners") or [
-                {"partner_type": t} for t in rd(p, "relevance.digital_lending.co_lending_partner_types", [])]
-            partners = table(partner_rows, ["partner_type", "count"], {
-                "partner_type": st.column_config.SelectboxColumn(
-                    "Partner type", options=with_existing(PARTNER_TYPES, partner_rows, "partner_type")),
-                "count": st.column_config.NumberColumn("How many", min_value=0, step=1)})
-            if apps and has_app is False:
-                warnings.append("You listed lending apps but answered No to \"Has its own lending app\".")
-            if partners and co_active is False:
-                warnings.append("You listed co-lending partners but answered No to \"Co-lending active\".")
-            new["digital_lending"] = {
-                "offers_digital_loans": offers, "own_lending_apps": apps,
-                "uses_lending_service_providers": uses_lsp, "lsp_count": lsp_n,
-                "uses_default_loss_guarantee": dlg,
-                "co_lending": {"active": co_active, "partners": partners}}
-            put(new, "relevance.digital_lending.has_own_lending_app", has_app)
-            put(new, "relevance.digital_lending.co_lending_partner_types", unique(partners, "partner_type"))
-
-        # ----- Network -----
-        with t_net:
-            a, b = st.columns(2)
-            with a:
-                ctypes = multi("Customer types", CUSTOMER_TYPES, rd(p, "customer_and_network.customer_type"),
-                               "Kinds of customers you lend to.")
-                branches = num("Number of branches", rd(p, "customer_and_network.number_of_branches"),
-                               "Total branches.", errors, integer=True)
-                states = multi("States of operation", STATES, rd(p, "customer_and_network.states_of_operation"),
-                               "States and union territories where you operate.")
-            with b:
-                recovery = tri("Uses recovery agents", rd(p, "customer_and_network.uses_recovery_agents"),
+                recovery = tri("Uses recovery agents", g(p, "relevance.other_activities.uses_recovery_agents"),
                                "Whether you use agents to recover overdue loans.")
-                ombud = tri("Internal ombudsman appointed",
-                            rd(p, "customer_and_network.internal_ombudsman_appointed"),
-                            "Whether you have appointed an internal ombudsman for complaints.")
-                nodal = tri("Principal nodal officer appointed",
-                            rd(p, "customer_and_network.principal_nodal_officer_appointed"),
-                            "Whether a principal nodal officer handles grievances.")
-            new["customer_and_network"] = {
-                "customer_type": ctypes, "number_of_branches": branches, "states_of_operation": states,
-                "uses_recovery_agents": recovery, "internal_ombudsman_appointed": ombud,
-                "principal_nodal_officer_appointed": nodal}
-
-        # ----- Ownership -----
-        with t_own:
-            a, b = st.columns(2)
-            with a:
-                promo = num("Promoter holding (%)", rd(p, "ownership_and_group.promoter_holding_percent"),
-                            "Share of the company held by promoters.", errors)
-                foreign = num("Foreign holding (%)", rd(p, "ownership_and_group.foreign_holding_percent"),
-                              "Share of the company held by foreign investors.", errors)
-                fdi = pick("FDI route", FDI_ROUTES, rd(p, "ownership_and_group.fdi_route"),
-                           "Route used for foreign investment.")
-            with b:
-                parent_reg = tri("Parent regulated by RBI", rd(p, "ownership_and_group.parent_is_rbi_regulated"),
-                                 "Whether the parent company is itself regulated by RBI.")
-                bank_sub = tri("Subsidiary of a bank", rd(p, "ownership_and_group.is_subsidiary_of_bank"),
-                               "Whether a bank owns you.")
-                group_nbfcs = lines("Other NBFCs in the group", rd(p, "ownership_and_group.other_group_nbfcs"),
-                                    "Names of other NBFCs under the same group.")
-            new["ownership_and_group"] = {
-                "promoter_holding_percent": promo, "foreign_holding_percent": foreign, "fdi_route": fdi,
-                "parent_is_rbi_regulated": parent_reg, "is_subsidiary_of_bank": bank_sub,
-                "other_group_nbfcs": group_nbfcs}
-
-        # ----- Governance -----
-        with t_gov:
-            committees = multi("Board committees", COMMITTEES, rd(p, "governance_and_organisation.committees"),
-                               "Committees your board has set up.")
-            st.markdown("**Key officers**")
-            officers = {}
-            cols = st.columns(2)
-            for i, (key, (label, help_)) in enumerate(KEY_OFFICERS.items()):
-                with cols[i % 2]:
-                    officers[key] = tri(label, rd(p, f"governance_and_organisation.key_officers.{key}"), help_)
-            new["governance_and_organisation"] = {"committees": committees, "key_officers": officers}
-
-        # ----- IT and outsourcing -----
-        with t_it:
-            a, b = st.columns(2)
-            with a:
-                core = pick("Core lending system", CORE_SYSTEMS, rd(p, "it_and_outsourcing.core_lending_system"),
-                            "Whether the system is built in-house, bought from a vendor, or both.")
-                cloud = tri("Uses cloud hosting", rd(p, "it_and_outsourcing.uses_cloud_hosting"),
-                            "Whether any systems run on the cloud.")
-                outsourced = multi("Outsourced functions", OUTSOURCED, rd(p, "it_and_outsourcing.outsourced_functions"),
+                outsourced = multi("Outsourced functions", OUTSOURCED,
+                                   g(p, "relevance.other_activities.outsourced_functions"),
                                    "Work you hand to outside firms.")
-            with b:
-                out_pol = tri("Board-approved outsourcing policy",
-                              rd(p, "it_and_outsourcing.board_approved_outsourcing_policy"),
-                              "Whether your board has approved an outsourcing policy.")
-                it_pol = tri("Board-approved IT policy", rd(p, "it_and_outsourcing.board_approved_it_policy"),
-                             "Whether your board has approved an IT policy.")
-            new["it_and_outsourcing"] = {
-                "core_lending_system": core, "uses_cloud_hosting": cloud, "outsourced_functions": outsourced,
-                "board_approved_outsourcing_policy": out_pol, "board_approved_it_policy": it_pol}
+            rel["other_activities"] = {
+                "securitisation_roles": roles, "insurance_distribution": insurance,
+                "uses_recovery_agents": recovery, "outsourced_functions": outsourced}
 
-        # ----- Payments and cross-border -----
-        with t_pay:
-            st.caption("Foreign borrowing (ECB) is on the Funding tab and foreign holding is on the "
-                       "Ownership tab.")
+        # ----- Digital and co-lending -----
+        with t_dig:
+            st.caption("Covers the RBI Digital Lending Directions and co-lending arrangements.")
+            st.subheader("Digital lending")
             a, b = st.columns(2)
             with a:
-                pay_auth = lines("Payment system authorisations",
-                                 rd(p, "relevance.payments_and_cards.payment_authorisations"),
-                                 "Authorisations RBI has given you to run payment services, for example "
-                                 "prepaid payment instruments. Leave empty if you have none.")
-                cards = tri("Issues credit cards", rd(p, "relevance.payments_and_cards.issues_credit_cards"),
-                            "Whether you issue credit cards.")
+                offers = tri("Offers digital loans", g(p, "relevance.digital_lending.offers_digital_loans"),
+                             "Whether you give loans through digital channels.")
+                has_app = tri("Has its own lending app", g(p, "relevance.digital_lending.has_own_lending_app"),
+                              "Whether you run a lending app under your own name.")
             with b:
-                trade = pick("Exports or imports", EXPORT_IMPORT,
-                             rd(p, "relevance.cross_border.exports_or_imports"),
+                uses_lsp = tri("Uses lending service providers",
+                               g(p, "relevance.digital_lending.uses_lending_service_providers"),
+                               "Whether third parties help you source, underwrite or collect on loans.")
+                dlg = tri("Uses default loss guarantee",
+                          g(p, "relevance.digital_lending.uses_default_loss_guarantee"),
+                          "Whether a partner guarantees you against loan losses.")
+            rel["digital_lending"] = {
+                "offers_digital_loans": offers, "has_own_lending_app": has_app,
+                "uses_lending_service_providers": uses_lsp, "uses_default_loss_guarantee": dlg}
+
+            st.subheader("Co-lending")
+            a, b = st.columns(2)
+            with a:
+                co_active = tri("Co-lending active", g(p, "relevance.co_lending.active"),
+                                "Whether you currently co-lend with another lender.")
+                co_partners = multi("Co-lending partner types", PARTNER_TYPES,
+                                    g(p, "relevance.co_lending.partner_types"),
+                                    "Kinds of lenders you co-lend with.")
+            with b:
+                co_products = multi("Co-lent products", PRODUCT_TYPES, g(p, "relevance.co_lending.products"),
+                                    "Products you lend jointly with a partner.")
+            rel["co_lending"] = {"active": co_active, "partner_types": co_partners, "products": co_products}
+
+        # ----- Funding and cross-border -----
+        with t_fund:
+            st.subheader("Funding")
+            funding = multi("Funding sources", FUNDING_TYPES, g(p, "relevance.funding_instruments"),
+                            "Every source you borrow from.")
+            rel["funding_instruments"] = funding
+
+            st.subheader("Payments and cards")
+            a, b = st.columns(2)
+            with a:
+                pay_auth = tri("Holds a payment system authorisation",
+                               g(p, "relevance.payments_and_cards.holds_payment_authorisation"),
+                               "Whether RBI has authorised you to run a payment system, for example "
+                               "prepaid payment instruments.")
+            with b:
+                cards = tri("Issues credit cards", g(p, "relevance.payments_and_cards.issues_credit_cards"),
+                            "Whether you issue credit cards.")
+            rel["payments_and_cards"] = {"holds_payment_authorisation": pay_auth, "issues_credit_cards": cards}
+
+            st.subheader("Cross-border")
+            a, b = st.columns(2)
+            with a:
+                trade = pick("Exports or imports", EXPORT_IMPORT, g(p, "relevance.cross_border.exports_or_imports"),
                              "Whether the company has export or import business. Pick none if it has neither.")
-                overseas = tri("Overseas investment made", rd(p, "relevance.cross_border.overseas_investment_made"),
+                ad = tri("Authorised dealer", g(p, "relevance.cross_border.is_authorised_dealer"),
+                         "Whether you hold an RBI authorised dealer licence for foreign exchange.")
+                overseas = tri("Overseas investment made", g(p, "relevance.cross_border.overseas_investment_made"),
                                "Whether you have invested in entities outside India.")
-                ad_cat = pick("Authorised dealer category", AD_CATEGORIES,
-                              rd(p, "relevance.cross_border.ad_category"),
-                              "Your authorised dealer category for foreign exchange. Pick none if you do not hold one.")
-            put(new, "relevance.payments_and_cards.payment_authorisations", pay_auth)
-            put(new, "relevance.payments_and_cards.issues_credit_cards", cards)
-            put(new, "relevance.cross_border.exports_or_imports", trade)
-            put(new, "relevance.cross_border.overseas_investment_made", overseas)
-            put(new, "relevance.cross_border.ad_category", ad_cat)
-
-        # ----- Supervisory -----
-        with t_sup:
-            penalties = lines("RBI penalties in the last 3 years", rd(p, "supervisory_history.rbi_penalties_last_3_years"),
-                              "Short description of each penalty.")
-            restrictions = lines("RBI business restrictions", rd(p, "supervisory_history.rbi_business_restrictions"),
-                                 "Any restrictions RBI has placed on your business.")
-            pending = tri("Pending inspection findings", rd(p, "supervisory_history.pending_inspection_findings"),
-                          "Whether findings from an RBI inspection are still open.")
-            new["supervisory_history"] = {"rbi_penalties_last_3_years": penalties,
-                                          "rbi_business_restrictions": restrictions,
-                                          "pending_inspection_findings": pending}
-
-        # ----- Other -----
-        with t_other:
-            st.caption("Anything the other tabs do not cover goes here. It is saved with the profile as it is.")
-            notes = st.text_area("Other notes", value=rd(p, "other_details.notes", ""), height=140,
-                                 help="Free text about your business that could affect which rules apply.")
-            st.markdown("**Extra fields**")
-            st.caption("Add your own name and value pairs, with an optional description.")
-            extras = table(rd(p, "other_details.extra_fields", []), ["field", "value", "description"], {
-                "field": st.column_config.TextColumn("Field"),
-                "value": st.column_config.TextColumn("Value"),
-                "description": st.column_config.TextColumn("Description")})
-            new["other_details"] = {"notes": notes.strip() or None, "extra_fields": extras}
+            with b:
+                ecb = tri("Foreign borrowing (ECB)", g(p, "relevance.cross_border.has_foreign_borrowing_ecb"),
+                          "Whether you have external commercial borrowings.")
+                foreign = num("Foreign holding (%)", g(p, "relevance.cross_border.foreign_holding_percent"),
+                              "Share of the company held by foreign investors.", errors, lo=0, hi=100)
+            rel["cross_border"] = {
+                "exports_or_imports": trade, "is_authorised_dealer": ad, "has_foreign_borrowing_ecb": ecb,
+                "foreign_holding_percent": foreign, "overseas_investment_made": overseas}
 
         submitted = st.form_submit_button("Save company details", type="primary")
 
@@ -928,14 +787,13 @@ def company_view():
         if errors:
             st.error("Not saved. Please fix:\n\n" + "\n".join(f"- {e}" for e in errors))
             return
-        sync_mirrors(new)       # copy each shared answer into its second place in the profile
         try:
-            save_profile(deep_merge(p, new))
+            save_profile(deep_merge(p, new))     # keeps every key this page does not edit
         except OSError as e:
             st.error(f"Could not save to `{PROFILE_PATH}`: {e}")
             return
         st.success("Company details saved.")
-        for w in warnings:
+        for w in profile_warnings(new):
             st.warning(w)
 
 
@@ -964,6 +822,24 @@ HYPER_PARAMS = [
     ("seed", "Seed", True, -1, 2147483647, 1, 42,
      "The same seed and settings give repeatable answers. Some backends treat -1 as a random seed."),
 ]
+
+# What the retrieval filter and profile settings mean (they are read by build_retriever in the backend).
+# "company" is accepted by the backend as another name for "all", so it has a label but no entry
+# in the list of choices.
+RETRIEVE_SOURCES = {
+    "master_directories": "Master directions only",
+    "notifications": "Notifications only",
+    "both": "Notifications and master directions",
+    "all": "Everything: notifications, master directions and company uploaded data",
+}
+RETRIEVE_SOURCE_LABELS = {**RETRIEVE_SOURCES, "company": "Everything (same as all)"}
+RETRIEVE_PROFILES = {
+    "default": "Default: read the company profile from the JSON file",
+    "custom": "Custom: also search the profile passages stored with the documents",
+}
+DEVICES = {"cuda": "cuda (graphics card)", "cpu": "cpu (processor)"}
+RETRIEVE_KEYS = {"filter", "answer_by_profile", "profile"}
+
 # Settings this page handles itself. Model_Details is shown read-only and data_check (the watcher's
 # reference dates and article link) is not shown at all. Both are listed here so they never turn up
 # under "Other settings", and neither is ever written by this page, so the file keeps its values.
@@ -972,6 +848,9 @@ KNOWN_SETTINGS = {
     "data_check": {"ref_date", "delta_ref_date", "ref_article"},
     "Model_Details": {"Embedding_Model", "Main_Model"},
     "Hyper_Param": {h[0] for h in HYPER_PARAMS},
+    "misc": {"tool_calling", "tool_calling_retries", "device", "jev"},
+    "retrieve_chat": RETRIEVE_KEYS,
+    "retrieve_watcher": RETRIEVE_KEYS,
 }
 
 
@@ -1030,6 +909,24 @@ def setting_number(label, val, default, lo, hi, step, help, integer=False):
                                        step=float(step), format="%.2f", help=help)), 4)
 
 
+def choice(label, options, val, default, labels, help, key=None):
+    """Dropdown over fixed options. A value already in the file that is not one of them is kept."""
+    opts = list(options)
+    if val is not None and val not in opts:
+        opts.append(val)
+    current = val if val in opts else default
+    return st.selectbox(label, opts, index=opts.index(current),
+                        format_func=lambda o: labels.get(o, str(o)), help=help, key=key)
+
+
+def switch(label, val, words, help, key, default=False):
+    """On/off tick box for a setting stored as words ("on"/"off", "yes"/"no") or as a true/false."""
+    on = default if val is None else (
+        val is True or str(val).strip().lower() in ("on", "yes", "true", "1"))
+    ticked = st.checkbox(label, value=on, help=help, key=key)
+    return ticked if isinstance(val, bool) else (words[0] if ticked else words[1])
+
+
 def other_settings(cfg):
     """Plain settings (text, numbers, on/off) that have no widget of their own above."""
     out = []
@@ -1084,7 +981,7 @@ def config_view():
     st.markdown(f"**Current schedule:** run time {hour_label(hour_now)}, "
                 f"{runs_now} run{'' if runs_now == 1 else 's'} per day.")
 
-    models, hp = section(cfg, "Model_Details"), section(cfg, "Hyper_Param")
+    models, hp, misc = section(cfg, "Model_Details"), section(cfg, "Hyper_Param"), section(cfg, "misc")
     with st.form("agent_config"):
         st.subheader("Schedule")
         a, b = st.columns(2)
@@ -1105,6 +1002,47 @@ def config_view():
         with b:
             st.text_input("Embedding model", value=str(models.get("Embedding_Model") or "Not set"),
                           disabled=True, help="The model the agent uses to search the master directions.")
+
+        st.subheader("Runtime")
+        a, b = st.columns(2)
+        with a:
+            device = choice("Device", DEVICES, misc.get("device"), "cuda", DEVICES,
+                            "Where the models run.", key="misc_device")
+            tool_calling = switch("Tool calling", misc.get("tool_calling"), ("on", "off"),
+                                  "When on, the model may call tools while it works on an answer.",
+                                  key="misc_tool_calling")
+        with b:
+            retries = setting_number("Tool calling retries", misc.get("tool_calling_retries"), 1, 0, 10, 1,
+                                     "How many times to retry a tool call that fails.", integer=True)
+            jev = switch("JEV", misc.get("jev"), ("on", "off"),
+                         "An on or off switch the backend reads. Leave it as it is unless you know what "
+                         "it controls.", key="misc_jev")
+
+        st.subheader("Retrieval")
+        st.caption("What the model may look up before it answers. Chat is the question chat. "
+                   "Watcher is the check of new notifications.")
+        retrieve = {}
+        cols = st.columns(2)
+        for col, sec, title in [(cols[0], "retrieve_chat", "Chat"), (cols[1], "retrieve_watcher", "Watcher")]:
+            body = section(cfg, sec)
+            with col:
+                st.markdown(f"**{title}**")
+                retrieve[sec] = {
+                    "filter": choice("Search in", RETRIEVE_SOURCES, body.get("filter"), "both",
+                                     RETRIEVE_SOURCE_LABELS,
+                                     "Which documents are searched for passages to answer from: the master "
+                                     "directions, the notifications, or everything including the data your "
+                                     "company uploaded.", key=f"{sec}_filter"),
+                    "answer_by_profile": switch("Answer using the company profile",
+                                                body.get("answer_by_profile"), ("yes", "no"),
+                                                "Lets the model use your company details when it answers.",
+                                                key=f"{sec}_answer_by_profile", default=True),
+                    "profile": choice("Profile source", RETRIEVE_PROFILES, body.get("profile"), "default",
+                                      RETRIEVE_PROFILES,
+                                      "Default reads the company profile from the JSON file. Custom also "
+                                      "searches profile passages stored with the other documents.",
+                                      key=f"{sec}_profile"),
+                }
 
         st.subheader("Generation settings")
         st.caption("How the main model writes its answers.")
@@ -1127,6 +1065,9 @@ def config_view():
         new = {
             "scraper_settings": {"time_scraper": hour, "run_count": int(runs)},
             "Hyper_Param": values,
+            "misc": {"tool_calling": tool_calling, "tool_calling_retries": retries,
+                     "device": device, "jev": jev},
+            **retrieve,
         }
         for sec, k, v in extra_values:
             if sec is None:
@@ -1138,8 +1079,223 @@ def config_view():
         except OSError as e:
             st.error(f"Could not save to `{file_name}`: {e}")
             return
-        st.success("Agent configuration saved. If the watcher is already running, restart it so it "
-                   "picks up the new values.")
+        st.success("Agent configuration saved. If the backend or the watcher is already running, "
+                   "restart it so it picks up the new values.")
+
+
+# ---------- error logs view ----------
+
+# The backend writes each error with these fields. Other names are mapped onto them when a file
+# uses a different spelling, and any further columns are kept as they are.
+LOG_COLUMNS = ["time", "error_file", "error_message", "error_count", "trace_back"]
+LOG_ALIASES = {
+    "time": "time", "timestamp": "time", "datetime": "time", "date": "time",
+    "error_file": "error_file", "file": "error_file", "source": "error_file", "module": "error_file",
+    "error_message": "error_message", "message": "error_message", "error": "error_message",
+    "error_count": "error_count", "count": "error_count",
+    "trace_back": "trace_back", "traceback": "trace_back", "trace": "trace_back",
+}
+LOG_EXTENSIONS = (".csv", ".json", ".jsonl", ".ndjson")
+SHOWN_LOG_COLUMNS = {"time": "Time (UTC)", "error_file": "Where", "error_message": "Error",
+                     "error_count": "Count", "log_file": "Weekly file"}
+MAX_PICKABLE_ERRORS = 200
+
+
+def json_records(obj):
+    """Turn whatever a JSON file holds into a list of records."""
+    if isinstance(obj, list):
+        return [x if isinstance(x, dict) else {"error_message": str(x)} for x in obj]
+    if isinstance(obj, dict):
+        nested = [v for v in obj.values()
+                  if isinstance(v, list) and v and all(isinstance(i, dict) for i in v)]
+        return [i for v in nested for i in v] if nested else [obj]
+    return [{"error_message": str(obj)}]
+
+
+def read_log_file(path):
+    """The rows of one weekly file. Raises if the file can't be understood."""
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
+        text = f.read()
+    if not text.strip():
+        return []
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".csv":
+        return pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False).to_dict("records")
+    if ext == ".json":
+        return json_records(json.loads(text))
+    rows = []                                   # .jsonl / .ndjson: one JSON object per line
+    for n, line in enumerate(text.splitlines(), 1):
+        if line.strip():
+            try:
+                rows.extend(json_records(json.loads(line)))
+            except ValueError:
+                raise ValueError(f"line {n} is not valid JSON")
+    return rows
+
+
+def normalise_columns(df):
+    seen, rename = set(), {}
+    for c in df.columns:
+        target = LOG_ALIASES.get(str(c).strip().lower().replace(" ", "_"))
+        if target and target not in seen:
+            seen.add(target)
+            rename[c] = target
+    df = df.rename(columns=rename)
+    return df.loc[:, ~df.columns.duplicated()]
+
+
+def list_log_files():
+    """(supported files, other files), or None if the folder does not exist."""
+    if not os.path.isdir(ERROR_LOG_DIR):
+        return None
+    supported, other = [], []
+    for root, _, names in os.walk(ERROR_LOG_DIR):
+        for n in names:
+            (supported if n.lower().endswith(LOG_EXTENSIONS) else other).append(os.path.join(root, n))
+    return sorted(supported), sorted(other)
+
+
+@st.cache_data(show_spinner=False)
+def load_error_logs(signature):
+    """All weekly files as one table, newest first, plus a line per file saying what happened to it.
+    The signature (path, modified time, size of every file) only serves as the cache key, so the
+    table is rebuilt whenever a weekly file changes or a new one appears."""
+    frames, files = [], []
+    for path, _, _ in signature:
+        name = os.path.relpath(path, ERROR_LOG_DIR)
+        try:
+            rows = read_log_file(path)
+        except Exception as e:                  # one bad file must not hide the others
+            files.append({"File": name, "Errors": 0, "Status": f"Could not read: {e}"})
+            continue
+        files.append({"File": name, "Errors": len(rows), "Status": "OK"})
+        if rows:
+            frame = normalise_columns(pd.DataFrame(rows))
+            frame["log_file"] = name
+            frames.append(frame)
+
+    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    for c in LOG_COLUMNS + ["log_file"]:
+        if c not in df:
+            df[c] = ""
+    df = df.fillna("").astype(str)
+
+    try:
+        parsed = pd.to_datetime(df["time"], errors="coerce", utc=True, format="mixed")
+    except (TypeError, ValueError):             # older pandas has no format="mixed"
+        parsed = pd.to_datetime(df["time"], errors="coerce", utc=True)
+    df["_ts"] = parsed
+    df["time"] = parsed.dt.strftime("%Y-%m-%d %H:%M:%S").where(parsed.notna(), df["time"])
+    df = df.sort_values("_ts", ascending=False, na_position="last", kind="stable").reset_index(drop=True)
+
+    extra = [c for c in df.columns if c not in LOG_COLUMNS + ["log_file", "_ts"]]
+    return df[LOG_COLUMNS + extra + ["log_file", "_ts"]], files
+
+
+def one_line(text, limit=80):
+    return " ".join(str(text).split())[:limit]
+
+
+def errors_view():
+    st.header("Error logs")
+    st.caption(f"Every weekly file in Error Logs Folder, combined into one list with the newest first. "
+               "The list reloads by itself when a weekly file changes.")
+    st.button("Refresh")
+
+    found = list_log_files()
+    if found is None or not (found[0] or found[1]):
+        st.info("No error files yet. They appear here once the backend has logged an error.")
+        return
+    supported, other = found
+    if not supported:
+        st.info(f"The folder has no files this page can read ({', '.join(LOG_EXTENSIONS)}).")
+        return
+
+    signature = []
+    for path in supported:
+        try:
+            stat = os.stat(path)
+        except OSError:
+            continue                            # removed while we were looking
+        signature.append((path, stat.st_mtime, stat.st_size))
+    df, files = load_error_logs(tuple(signature))
+
+    unreadable = [f for f in files if f["Status"] != "OK"]
+    if unreadable:
+        st.warning(f"{len(unreadable)} of {len(files)} files could not be read and are left out. "
+                   "Details are under Files loaded.")
+    with st.expander(f"Files loaded ({len(files)})"):
+        st.dataframe(pd.DataFrame(files), hide_index=True)
+        if other:
+            st.caption("Skipped because of the file type: "
+                       + ", ".join(f"`{os.path.relpath(f, ERROR_LOG_DIR)}`" for f in other))
+
+    if df.empty:
+        st.info("The weekly files are there but hold no errors.")
+        return
+
+    # ----- filters -----
+    c1, c2, c3 = st.columns([2, 2, 3])
+    wheres = c1.multiselect("Where it happened", sorted(x for x in df["error_file"].unique() if x))
+    weeks = c2.multiselect("Weekly file", list(dict.fromkeys(df["log_file"])))
+    query = c3.text_input("Search the message or traceback")
+    view = df
+    if wheres:
+        view = view[view["error_file"].isin(wheres)]
+    if weeks:
+        view = view[view["log_file"].isin(weeks)]
+    if query.strip():
+        text = (view["error_message"] + " " + view["trace_back"]).str.lower()
+        view = view[text.str.contains(query.strip().lower(), regex=False)]
+
+    stamps = view["_ts"].dropna()
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Errors", len(view))
+    m2.metric("First", stamps.min().strftime("%d %b %Y %H:%M") if len(stamps) else "-")
+    m3.metric("Latest", stamps.max().strftime("%d %b %Y %H:%M") if len(stamps) else "-")
+
+    if view.empty:
+        st.info("No errors match these filters.")
+        return
+
+    if len(stamps):
+        st.caption("Errors per day (UTC)")
+        st.bar_chart(stamps.dt.strftime("%Y-%m-%d").value_counts().sort_index())
+
+    # ----- combined list -----
+    shown = [c for c in view.columns if c not in ("_ts", "trace_back")]
+    st.dataframe(
+        view[shown], hide_index=True,
+        column_config={c: st.column_config.TextColumn(label, width="large" if c == "error_message" else None)
+                       for c, label in SHOWN_LOG_COLUMNS.items()})
+
+    export = view.drop(columns=["_ts"])
+    d1, d2, _ = st.columns([1, 1, 3])
+    d1.download_button("Download as one CSV", data=export.to_csv(index=False).encode("utf-8-sig"),
+                       file_name="error_logs_combined.csv", mime="text/csv")
+    d2.download_button("Download as one JSON",
+                       data=export.to_json(orient="records", force_ascii=False, indent=2),
+                       file_name="error_logs_combined.json", mime="application/json")
+    st.caption("The downloads hold the errors listed above: all of them when no filter is set.")
+
+    # ----- one error in full -----
+    st.subheader("Details")
+    recent = view.head(MAX_PICKABLE_ERRORS).reset_index(drop=True)
+    if len(view) > len(recent):
+        st.caption(f"Showing the newest {len(recent)} of the {len(view)} matching errors. "
+                   "Use the filters to narrow the list down.")
+    labels = [f"{r.time}  |  {r.error_file or '-'}  |  {one_line(r.error_message)}"
+              for r in recent.itertuples()]
+    i = st.selectbox("Open an error", range(len(recent)), format_func=lambda n: labels[n])
+    row = recent.iloc[i]
+    st.markdown(f"**{row['error_file'] or 'Unknown source'}** at {row['time'] or 'unknown time'} "
+                f"(weekly file `{row['log_file']}`)")
+    if row["error_count"]:
+        st.caption(f"Error count: {row['error_count']}")
+    st.code(row["error_message"] or "-", language="text")
+    if row["trace_back"] and row["trace_back"] != "Not Applicable":
+        st.markdown("**Traceback**")
+        st.code(row["trace_back"], language="text")
 
 
 if view == CHAT_VIEW:
@@ -1148,5 +1304,7 @@ elif view == NOTES_VIEW:
     notifications_panel()
 elif view == COMPANY_VIEW:
     company_view()
-else:
+elif view == CONFIG_VIEW:
     config_view()
+else:
+    errors_view()

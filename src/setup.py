@@ -13,6 +13,7 @@ from langchain_chroma import Chroma
 from datetime import datetime, timezone
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
+from huggingface_hub import hf_hub_download, snapshot_download
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -22,15 +23,36 @@ project_root = os.path.abspath(os.path.join(script_dir, ".."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from utils.error_store import error_store  
+from utils.error_store import error_store
 
 ids_file = os.path.abspath(os.path.join(script_dir, "..", "data", "setup.txt"))
 master_directory_file = os.path.abspath(os.path.join(script_dir, "..", "data", "master_directory", "master_directory_html.jsonl"))
 notification_file = os.path.abspath(os.path.join(script_dir, "..", "data", "notification_historical", "filtered_notifications_deduped.jsonl"))
 chroma_dir = os.path.abspath(os.path.join(script_dir, "..", "chroma_db"))
 chroma_state_file = os.path.join(chroma_dir, "setup_state.json")
-model_path = os.path.abspath(os.path.join(script_dir, "..", "model", "embeddinggemma-2"))
 config_file = os.path.abspath(os.path.join(script_dir, "..", "config.json"))
+
+# models live in <project>/model/<one folder per model>
+model_dir = os.path.abspath(os.path.join(script_dir, "..", "model"))
+
+embedding_repo = "google/embeddinggemma-2"
+model_path = os.path.join(model_dir, "embeddinggemma-2")
+
+llm_repo = "bartowski/google_gemma-4-E4B-it-GGUF"
+llm_filename = "google_gemma-4-E4B-it-Q4_K_M.gguf"
+llm_dir = os.path.join(model_dir, "google_gemma-4-E4B-it-Q4_K_M")
+llm_path = os.path.join(llm_dir, llm_filename)
+
+# a finished embedding model download always contains these
+embedding_required_files = [
+    "config.json",
+    "modules.json",
+    "model.safetensors",
+    "tokenizer.json",
+    "config_sentence_transformers.json",
+    "sentence_bert_config.json",
+]
+embedding_required_dirs = ["1_Pooling", "2_Normalize"]
 
 chroma_collection = "master_directories"
 
@@ -64,7 +86,7 @@ splitter = RecursiveCharacterTextSplitter(
     separators=["\n", ". ", " ", ""],
 )
 
-config_template = {{
+config_template = {
     "scraper_settings": {
         "time_scraper": 9,
         "run_count": 1
@@ -94,9 +116,9 @@ config_template = {{
         "min_p": 0.05,
         "repeat_penalty": 1.1
     },
-    "misc":{
-        "tool_calling" : "off",
-        "device" : "cuda"
+    "misc": {
+        "tool_calling": "off",
+        "device": "cuda"
     },
     "retrieve_chat": {
         "filter": "both",
@@ -108,7 +130,6 @@ config_template = {{
         "answer_by_profile": "yes",
         "profile": "default"
     }
-}
 }
 
 
@@ -134,6 +155,83 @@ def log_error(error, where=""):
         )
     except Exception as store_error:
         print(f"error_store failed ({store_error}), original error: {message}")
+
+
+def embedding_model_exists():
+    """True if model/embeddinggemma-2 holds a complete download."""
+    if not os.path.isdir(model_path):
+        return False
+
+    for name in embedding_required_files:
+        if not os.path.isfile(os.path.join(model_path, name)):
+            return False
+
+    for name in embedding_required_dirs:
+        if not os.path.isdir(os.path.join(model_path, name)):
+            return False
+
+    return True
+
+
+def llm_exists():
+    """True if the Gemma 4 E4B GGUF file is on disk.
+
+    huggingface_hub keeps unfinished downloads under .cache and only moves the file
+    into place once it is complete, so a file being here means it finished.
+    """
+    return os.path.isfile(llm_path) and os.path.getsize(llm_path) > 0
+
+
+def download_embedding_model():
+    print(f"\n=== downloading embedding model ({embedding_repo}) ===")
+    os.makedirs(model_path, exist_ok=True)
+    snapshot_download(repo_id=embedding_repo, local_dir=model_path)
+    print(f"embedding model saved to {model_path}")
+
+
+def download_llm():
+    print(f"\n=== downloading main model ({llm_repo} / {llm_filename}) ===")
+    print("this file is about 5 GB, interrupted downloads resume on the next run")
+    os.makedirs(llm_dir, exist_ok=True)
+    hf_hub_download(repo_id=llm_repo, filename=llm_filename, local_dir=llm_dir)
+    print(f"main model saved to {llm_path}")
+
+
+def ensure_model(label, exists, download):
+    """Downloads one model if it is missing. Returns True if it is ready to use."""
+    if exists():
+        print(f"{label}: found")
+        return True
+
+    print(f"{label}: not found, downloading it now")
+    try:
+        download()
+    except Exception as error:
+        log_error(error, f"ensure_model: {label} download")
+        print(f"{label}: download failed ({error})")
+        print("  if this is a 401/403 error, accept the license on the model page "
+              "and set the HF_TOKEN environment variable")
+        return False
+
+    if not exists():
+        message = f"{label} download finished but the expected files are missing"
+        print(f"{label}: {message}")
+        log_error(message, f"ensure_model: {label}")
+        return False
+
+    print(f"{label}: ready")
+    return True
+
+
+def check_models():
+    """Makes sure both models are in model/, downloading whichever is missing.
+
+    Both are always attempted, so a failure on one does not stop the other.
+    Returns True only if both are ready.
+    """
+    embedding_ok = ensure_model("embedding model", embedding_model_exists, download_embedding_model)
+    llm_ok = ensure_model("main model", llm_exists, download_llm)
+    return embedding_ok and llm_ok
 
 
 def write_config(data):
@@ -707,8 +805,8 @@ def embed_data(device):
 
 def build_chromadb(device):
     """Downloads and embeds everything. Returns True only if setup was completed and marked."""
-    if not os.path.isdir(model_path):
-        raise FileNotFoundError(f"embedding model folder not found: {model_path}")
+    if not embedding_model_exists():
+        raise FileNotFoundError(f"embedding model is missing or incomplete: {model_path}")
 
     record_ids = read_ids()
     master_record_ids = record_ids[:master_directory_count]
@@ -745,9 +843,17 @@ def build_chromadb(device):
 
 
 def setup(device="cuda"):
-    """Runs the full setup. Returns True only if the database and config are both healthy at the end."""
+    """Runs the full setup. Returns True only if the models, database and config are all healthy at the end."""
+    models_ok = False
     db_ok = False
     config_ok = False
+
+    # models first: the embedding model is needed to build the database
+    try:
+        models_ok = check_models()
+    except Exception as error:
+        log_error(error, "setup: models")
+        print(f"\nmodel setup failed: {error}")
 
     try:
         if check_chromadb():
@@ -766,7 +872,7 @@ def setup(device="cuda"):
         log_error(error, "setup: config")
         print(f"\nconfig check failed: {error}")
 
-    if db_ok and config_ok:
+    if models_ok and db_ok and config_ok:
         print("\nsetup finished")
         return True
 

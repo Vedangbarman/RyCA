@@ -15,13 +15,13 @@ from langchain_openai import ChatOpenAI
 from datetime import datetime, timezone
 from utils.error_store import error_store
 from langchain_core.documents import Document
+from utils.model import get_embeddings, get_store
 from utils.week_file_save import current_week_file
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.retrievers import BM25Retriever
 from langchain_classic.retrievers import EnsembleRetriever
 from utils.find_reference import find_mds, load_titles, double_hop
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-
 
 
 load_dotenv()
@@ -32,7 +32,7 @@ os.environ["GOOGLE_API_KEY"] = API_KEY
 script_dir = os.path.dirname(os.path.realpath(__file__))
 path = os.path.join(script_dir, "..", "data", "master_directory", "master_directory.jsonl")
 out_dir_output = os.path.abspath(os.path.join(script_dir, "..", "data", "notifications_output"))
-config = os.path.abspath(os.path.join(script_dir, "..", "..","config.json"))
+config = os.path.abspath(os.path.join(script_dir, "..","config.json"))
 with open(config, "r", encoding="utf-8") as f:
         config = json.load(f)
 embedding_path = config["Model_Details"]["Embedding_Model_path"]
@@ -92,19 +92,13 @@ class ChatEvaluation(BaseModel):
     answer : str
 
 
-def load_store(): # load chroma database
-    return Chroma(
-            collection_name=f"master_directories",
-            embedding_function=embeddings,
-            persist_directory=in_dir_data,
-        )
 
 
 def build_retriever(type):
     """ get raw documents for bm25 and build retriever functions
     because if I am calling retrieve function inside loop so having this logic in there means wastage of compute
     type here is either "chat" or "watcher" (watcher = run_batch), it decides which settings to read from config.json"""
-    cos_store = load_store()
+    cos_store = get_store()
     K = 2
 
     # bm25 is the same for chat and watcher so build it only once and reuse it

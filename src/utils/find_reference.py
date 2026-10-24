@@ -4,9 +4,7 @@ import json
 import jsonlines
 import unicodedata
 from dotenv import load_dotenv
-from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
-
+from utils.model import get_store
 
 load_dotenv()
 API_KEY = os.getenv('GEMINI')
@@ -19,9 +17,7 @@ with open(config, "r", encoding="utf-8") as f:
         config = json.load(f)
 
 
-embedding_path = config["Model_Details"]["Embedding_Model_path"]
-script_dir = os.path.dirname(os.path.realpath(__file__))
-in_dir_data = os.path.abspath(os.path.join(script_dir, "..", "chroma_db"))
+
 
 
 UPDATED_RE = re.compile(r"\s*\(updated as on [^)]*\)", re.IGNORECASE)
@@ -54,13 +50,7 @@ def find_mds(text: str, titles: dict[str, str]) -> list[str]:
     return [title for key, title in titles.items() if key in t]
 
 
-def load_store(): # load chroma database
-    local_embeddings = HuggingFaceEmbeddings(model_name=embedding_path)
-    return Chroma(
-        collection_name="master_directories",
-        embedding_function=local_embeddings,
-        persist_directory=in_dir_data,
-    )
+
 
 def build_title_filter(title_keywords: list[str]) -> dict:
     if not title_keywords:
@@ -72,14 +62,12 @@ def build_title_filter(title_keywords: list[str]) -> dict:
     }
 
 
-def double_hop(query,titles):
-    db = load_store()
-    results = db.similarity_search(
+def double_hop(query, titles):
+    return get_store().similarity_search(
         query=query,
         k=5,
-        filter=build_title_filter(titles)
+        filter=build_title_filter(titles),
     )
-    return results 
 
 if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.realpath(__file__))

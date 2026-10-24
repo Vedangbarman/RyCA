@@ -32,8 +32,11 @@ os.environ["GOOGLE_API_KEY"] = API_KEY
 script_dir = os.path.dirname(os.path.realpath(__file__))
 path = os.path.join(script_dir, "..", "data", "master_directory", "master_directory.jsonl")
 out_dir_output = os.path.abspath(os.path.join(script_dir, "..", "data", "notifications_output"))
-embedding_path = os.path.abspath(os.path.join(script_dir, "..", "model","embeddinggemma-2"))
-model_path = os.path.abspath(os.path.join(script_dir, "..", "model","google_gemma-4-E4B-it-Q4_K_M","google_gemma-4-E4B-it-Q4_K_M.gguf"))
+config = os.path.abspath(os.path.join(script_dir, "..", "..","config.json"))
+with open(config, "r", encoding="utf-8") as f:
+        config = json.load(f)
+embedding_path = config["Model_Details"]["Embedding_Model_path"]
+
 out_dir_chat = os.path.abspath(os.path.join(script_dir, "..", "data", "chat"))
 
 _cache = {}

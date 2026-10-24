@@ -14,7 +14,12 @@ os.environ["GOOGLE_API_KEY"] = API_KEY
 
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
-embedding_path = os.path.abspath(os.path.join(script_dir,"..", "..", "model","embeddinggemma-2"))
+config = os.path.abspath(os.path.join(script_dir, "..", "..","config.json"))
+with open(config, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+
+embedding_path = config["Model_Details"]["Embedding_Model_path"]
 script_dir = os.path.dirname(os.path.realpath(__file__))
 in_dir_data = os.path.abspath(os.path.join(script_dir, "..", "chroma_db"))
 

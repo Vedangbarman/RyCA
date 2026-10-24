@@ -24,10 +24,16 @@ from utils.error_store import error_store
 
 # paths and settings below must match setup.py, otherwise the updated chunks will not
 # line up with the ones that are already in the database
-master_directory_file = os.path.abspath(os.path.join(script_dir, "..", "data", "master_directory", "master_directory_html.jsonl"))
-chroma_dir = os.path.abspath(os.path.join(script_dir, "..", "chroma_db"))
-chroma_state_file = os.path.join(chroma_dir, "setup_state.json")
-model_path = os.path.abspath(os.path.join(script_dir, "..", "model", "embeddinggemma-2"))
+master_directory_file = os.path.abspath(os.path.join(script_dir,"..", "..", "data", "master_directory", "master_directory_html.jsonl"))
+chroma_dir = os.path.abspath(os.path.join(script_dir,"..", "..", "chroma_db"))
+chroma_state_file = os.path.join(chroma_dir,"..", "setup_state.json")
+
+config = os.path.abspath(os.path.join(script_dir, "..", "..","config.json"))
+with open(config, "r", encoding="utf-8") as f:
+        config = json.load(f)
+
+
+model_path = config["Model_Details"]["Embedding_Model_path"]
 
 chroma_collection = "master_directories"
 master_directory_url = "https://rbi.org.in/scripts/BS_ViewMasDirections.aspx?id={}"

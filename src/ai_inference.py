@@ -424,7 +424,7 @@ def chat_job(sid, question, max_turns=6):
     mds = find_mds(chunks_text,_titles)
     if mds:
         with timer("chat/double_hop"):
-            chunks_text = format_docs(chunks + double_hop(chunks_text, mds)[:4])
+            chunks_text = format_docs(chunks + double_hop(question, mds)[:4])
 
     messages = [SystemMessage(content=SYSTEM_PROMPT.format(context=chunks_text))]
     for m in hist[-2 * max_turns:]:

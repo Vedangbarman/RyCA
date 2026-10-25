@@ -167,8 +167,8 @@ class ComplianceEvaluation(BaseModel,):
     actions_required : str
     effective_date: str = Field(description="The date string formatted exactly as 'ddd, DD MMM YYYY HH:MM:SS' (e.g. 'Mon, 21 Sep 2026 17:25:00')")
     retrieval_status : Literal[-1, 0, 1, 2]
-    correct_master_dir : TITLES
-    master_dir_update : TITLES
+    correct_master_dir : TITLES # pyright: ignore[reportInvalidTypeForm]
+    master_dir_update : TITLES # pyright: ignore[reportInvalidTypeForm]
 
 
 def retrieve(query, hybrid, k=4):

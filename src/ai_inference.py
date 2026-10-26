@@ -162,6 +162,7 @@ class ComplianceEvaluation(BaseModel,):
     """
     title: str
     link: str
+    is_relevant : str
     notification_date : str = Field(description="The date string formatted exactly as 'ddd, DD MMM YYYY HH:MM:SS' (e.g. 'Mon, 21 Sep 2026 17:25:00')")
     explanation : str
     actions_required : str
@@ -233,7 +234,8 @@ def run_batch():
                                 two step retrieval so data always retrieves. 
                                 "title" ( as mentioned in "data")
                                 "link" ( as mentioned in "data")
-                                "explanation" (explane new changes and old changes and how it affect things in proper words as described in notification),
+                                "is relevant" (is notification relevant to profile and nbfc or not)
+                                "explanation" (explain new changes and old changes and how it affect things in proper words as described in notification),
                                 "actions_required" (actions required by the company to make).
                                 "notification_date" (when the notification was issused)
                                 "effective_date" ( when does the notification takes effect in only return when date is mentioned in notification otherwise return not mentioned in notification) 
@@ -260,6 +262,7 @@ def run_batch():
                                 two step retrieval so data always retrieves. 
                                 "title" ( as mentioned in "data")
                                 "link" ( as mentioned in "data")
+                                "is relevant" (is notification relevant to profile and nbfc or not)
                                 "explanation" (explane new changes and old changes and how it affect things in proper words as described in notification),
                                 "actions_required" (actions required by the company to make).
                                 "notification_date" (when the notification was issused)
@@ -301,6 +304,7 @@ def run_batch():
                                         two step retrieval so data always retrieves. 
                                         "title" ( as mentioned in "data")
                                         "link" ( as mentioned in "data")
+                                        "is relevant" (is notification relevant to profile and nbfc or not)
                                         "explanation" (explane new changes and old changes and how it affect things in proper words as described in notification),
                                         "actions_required" (actions required by the company to make).
                                         "notification_date" (when the notification was issused)

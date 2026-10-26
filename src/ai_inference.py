@@ -176,6 +176,26 @@ def retrieve(query, hybrid, k=4):
     return hybrid.invoke(query)[:k]
 
 
+# What gets saved next to every notification result and every chat answer so the frontend can show
+# what the model was given: the passages retrieval found, and the extra passages the double hop added.
+SOURCE_KEYS = ("retrieved_data", "double_hop_data")
+
+
+def pack_docs(docs, stage=None):
+    """Plain dicts for a list of retrieved Documents, so they can be written to the jsonl files.
+    stage labels passages that came from a retry (only set for the retries in run_batch)."""
+    out = []
+    for d in docs or []:
+        meta = d.metadata or {}
+        item = {"doc_title": str(meta.get("doc_title", "Unknown")),
+                "source": str(meta.get("source", "")),
+                "content": d.page_content}
+        if stage:
+            item["stage"] = stage
+        out.append(item)
+    return out
+
+
 def run_batch():
     """ Match incoming notifications against rag database check for other master directory mention and if yes then retrieve 
     relevant data from that particular document """
@@ -217,6 +237,7 @@ def run_batch():
                     combined_text = "\n\n".join([doc.page_content for doc in retrieved_data])
                     recorvered_mds = find_mds(combined_text,_titles)
                     
+                    double_hop_data = []
                     if recorvered_mds:
                         double_hop_data = double_hop(combined_text, recorvered_mds)
                         final = retrieved_data + double_hop_data
@@ -283,6 +304,7 @@ def run_batch():
                             
                     evaluation : ComplianceEvaluation = structured_llm.invoke(promt)
                     
+                    saved_hop = pack_docs(double_hop_data)     # passages from any retry below are added to this
                     tool_calling = data["misc"]["tool_calling"]
                     if tool_calling == "on":
                         tool_calling_retries = data["misc"]["tool_calling_retires"]
@@ -295,6 +317,7 @@ def run_batch():
                                 correct_master_dir = []
                                 correct_master_dir.append(evaluation.correct_master_dir)
                                 tool_called_data = double_hop(json_line["clean_description"],correct_master_dir)
+                                saved_hop += pack_docs(tool_called_data, f"retry {i + 1}")
                                 correct_text = "\n\n".join([doc.page_content for doc in tool_called_data])
                                 promt = f"""You are Regulatory compliance agent your task is to take company profile tagged with Profile : and Data : (Which is reserve bank of India Notifications)
                                         and retrieved_data which rag retrieves on basis of notification from vector database made up of rbi master directories your job is to look at the data
@@ -345,12 +368,16 @@ def run_batch():
                     if  evaluation.correct_master_dir != "none":
                         print("Hi")
                     
-                    results.append(evaluation.model_dump())
+                    # the saved row is the model's answer plus the passages it was given
+                    record = evaluation.model_dump()
+                    record["retrieved_data"] = pack_docs(retrieved_data)
+                    record["double_hop_data"] = saved_hop
+                    results.append(record)
 
                     output_path = current_week_file(out_dir_output,format = "jsonl")
                 
                     with jsonlines.open(output_path, mode="a") as writer:
-                        writer.write(evaluation.model_dump())
+                        writer.write(record)
             
             except Exception as e:
                 error_store(error_message=str(e),trace_back = traceback.format_exc(),time = str(datetime.now(timezone.utc)),error_count="Null",error_file="ai_inference")
@@ -401,19 +428,23 @@ def load_chat(name):
 
 
 def list_chats():
-    """Every saved chat, most recently used first."""
+    """Every saved chat, most recently used first. Answers keep the passages saved with them."""
     chats = []
     if os.path.isdir(out_dir_chat):
         for name in os.listdir(out_dir_chat):
             rows = load_chat(name)
             if rows:
                 chats.append({"name": name, "last": rows[-1].get("ts", ""),
-                              "messages": [{"role": r["role"], "content": r["content"]} for r in rows]})
+                              "messages": [{"role": r["role"], "content": r["content"],
+                                            **{k: r[k] for k in SOURCE_KEYS if k in r}}
+                                           for r in rows]})
     chats.sort(key=lambda c: c["last"], reverse=True)
     return [{"name": c["name"], "messages": c["messages"]} for c in chats]
 
 
 def chat_job(sid, question, max_turns=6):
+    """Returns {"answer", "retrieved_data", "double_hop_data"}. The two lists are also saved with
+    the answer in the chat file."""
     log(f"chat_job called, file={__file__}")
     sid = safe_chat_name(sid)
     if sid not in _histories:
@@ -426,9 +457,11 @@ def chat_job(sid, question, max_turns=6):
     chunks_text = "\n\n".join(d.page_content for d in chunks)
     
     mds = find_mds(chunks_text,_titles)
+    hop_docs = []
     if mds:
         with timer("chat/double_hop"):
-            chunks_text = format_docs(chunks + double_hop(question, mds)[:4])
+            hop_docs = double_hop(question, mds)[:4]
+            chunks_text = format_docs(chunks + hop_docs)
 
     messages = [SystemMessage(content=SYSTEM_PROMPT.format(context=chunks_text))]
     for m in hist[-2 * max_turns:]:
@@ -440,10 +473,12 @@ def chat_job(sid, question, max_turns=6):
     with timer("chat/llm"):
         answer = get_llm().invoke(messages).text
 
-    new = [{"role": "user", "content": question}, {"role": "assistant", "content": answer}]
+    sources = {"retrieved_data": pack_docs(chunks), "double_hop_data": pack_docs(hop_docs)}
+    new = [{"role": "user", "content": question},
+           {"role": "assistant", "content": answer, **sources}]
     save_chat(sid, new)
     hist += new
-    return answer
+    return {"answer": answer, **sources}
 
 def read_results():
     rows = []

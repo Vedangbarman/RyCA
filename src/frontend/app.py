@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+from datetime import datetime, timezone
 
 import pandas as pd
 import requests
@@ -24,6 +25,7 @@ STARTERS = [
     "Which master directions apply to all NBFCs?",
     "What are the large exposure limits for IDF-NBFCs?",
 ]
+SOURCE_KEYS = ("retrieved_data", "double_hop_data")     # saved by the backend next to every answer / notification
 CHAT_VIEW, NOTES_VIEW, COMPANY_VIEW, CONFIG_VIEW, ERRORS_VIEW = (
     "Chat", "Notifications", "Company details", "Agent configuration", "Error logs")
 
@@ -110,7 +112,10 @@ def ask(chat_name, question):
                       json={"session_id": chat_name, "question": question},
                       timeout=CHAT_TIMEOUT)
     r.raise_for_status()
-    return r.json()["answer"]
+    data = r.json()
+    # the backend may nest the whole result under "answer"
+    return data["answer"] if isinstance(data["answer"], dict) else data
+    # -> {"answer", "retrieved_data", "double_hop_data"}
 
 
 def fetch_notifications():
@@ -169,7 +174,65 @@ with st.sidebar:
                       **STRETCH)
 
 
+# ---------- retrieved data (used by the chat and the notifications view) ----------
+
+def when(ts):
+    """'27 Oct 2026 11:51 UTC' from the time the backend saved, or '' when there is none."""
+    try:
+        t = datetime.fromisoformat(str(ts))
+    except ValueError:
+        return ""
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t.astimezone(timezone.utc).strftime("%d %b %Y %H:%M UTC")
+
+
+def toggle(flag):
+    ss[flag] = not ss.get(flag, False)
+
+
+def sources_toggle(flag):
+    """Button that shows or hides the retrieved data. Nothing is shown until it is clicked.
+    The on/off state is kept in session state, so the 5 second refresh doesn't close it again."""
+    on = ss.get(flag, False)
+    st.button("Hide retrieved data" if on else "Show retrieved data",
+              key=f"btn_{flag}", on_click=toggle, args=(flag,))
+    return on
+
+
+def show_passages(item):
+    """item holds retrieved_data and double_hop_data, as saved by the backend.
+    Passages with a stage ("retry 1", ...) are the ones fetched by tool calling."""
+    retrieved = item.get("retrieved_data") or []
+    extra = item.get("double_hop_data") or []
+    if not (retrieved or extra):
+        st.caption("No retrieved data was saved for this one.")
+        return
+    groups = [("Retrieved data", retrieved),
+              ("Double hop data", [p for p in extra if not p.get("stage")]),
+              ("Tool called data", [p for p in extra if p.get("stage")])]
+    for heading, passages in groups:
+        if not passages:
+            continue
+        st.markdown(f"**{heading}**")
+        for p in passages:
+            with st.container(border=True):
+                title = p.get("doc_title") or "Unknown"
+                st.markdown(f"**{title}**" + (f" ({p['stage']})" if p.get("stage") else ""))
+                if p.get("source"):
+                    st.caption(f"source: {p['source']}")
+                st.text(p.get("content", ""))
+
+
 # ---------- chat view ----------
+
+def show_message(m, flag):
+    st.markdown(m["content"])
+    if when(m.get("ts")):
+        st.caption(when(m["ts"]))
+    if m["role"] == "assistant" and sources_toggle(flag):
+        show_passages(m)
+
 
 def name_form():
     st.header("Name your chat")
@@ -200,9 +263,9 @@ def chat_view():
         return
 
     st.header(ss.active)
-    for m in msgs:
+    for i, m in enumerate(msgs):
         with st.chat_message(m["role"]):
-            st.markdown(m["content"])
+            show_message(m, f"src_chat_{ss.active}_{i}")
 
     if not msgs and not question:
         st.caption("Ask a question below, or start with one of these.")
@@ -215,13 +278,15 @@ def chat_view():
         with st.chat_message("assistant"):
             with st.spinner("Waiting for the model. New notifications are processed first."):
                 try:
-                    answer = ask(ss.active, question)
+                    result = ask(ss.active, question)
                 except requests.RequestException as e:
                     st.error(f"Could not get an answer: {e}")
                     return
-            st.markdown(answer)
-        msgs += [{"role": "user", "content": question},
-                 {"role": "assistant", "content": answer}]
+            now = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+            reply = {"role": "assistant", "content": result["answer"], "ts": now,
+                     **{k: result.get(k) or [] for k in SOURCE_KEYS}}
+            show_message(reply, f"src_chat_{ss.active}_{len(msgs) + 1}")
+        msgs += [{"role": "user", "content": question, "ts": now}, reply]
         if created:
             st.rerun()          # refresh the sidebar so the new chat shows up
 
@@ -236,22 +301,30 @@ def notifications_panel():
         st.error("Can't reach the backend. Start it with `python one_ring.py`.")
         return
 
-    applicable = [r for r in rows if r.get("is_applicable")]
-    if not applicable:
-        st.info("Nothing applicable yet. New notifications show up here as they are checked."
+    # only the applicable ones are listed, unless the button below is switched on
+    show_all = ss.get("show_all_notes", False)
+    st.button("Show only applicable notifications" if show_all else "Show all notifications",
+              key="btn_show_all_notes", on_click=toggle, args=("show_all_notes",))
+
+    shown = rows if show_all else [r for r in rows if r.get("is_applicable")]
+    if not shown:
+        st.info(("Nothing checked yet. " if show_all else "Nothing applicable yet. ")
+                + "New notifications show up here as they are checked."
                 if not rows else
                 "None of the notifications checked so far apply to your profile.")
         return
 
-    # newest first; the #number is the position among applicable ones, so it never changes
-    options = {f"#{i + 1}  {r.get('title', 'Untitled')}": r
-               for i, r in reversed(list(enumerate(applicable)))}
+    # newest first; the #number is the position in the list, so it never changes
+    options = {f"#{i + 1}  {r.get('title', 'Untitled')}" + ("" if r.get("is_applicable") else "  (not applicable)"): r
+               for i, r in reversed(list(enumerate(shown)))}
     r = options[st.selectbox("Notification", list(options))]
 
     with st.container(border=True):
         st.subheader(r.get("title", "Untitled"))
         if r.get("link"):
             st.markdown(f"[Open the original notification]({r['link']})")
+        if when(r.get("ts")):
+            st.caption(f"Checked {when(r['ts'])}")
         d1, d2, d3 = st.columns(3)
         for col, label, key in [(d1, "Published", "pubdate"),
                                 (d2, "Takes effect", "effective_date"),
@@ -270,6 +343,9 @@ def notifications_panel():
         st.markdown(r.get("explanation", "-"))
     with tab_actions:
         st.markdown(r.get("actions_required", "-"))
+
+    if sources_toggle(f"src_note_{r.get('link') or r.get('title')}"):
+        show_passages(r)
 
 
 # ---------- company details view ----------

@@ -372,6 +372,7 @@ def run_batch():
                     record = evaluation.model_dump()
                     record["retrieved_data"] = pack_docs(retrieved_data)
                     record["double_hop_data"] = saved_hop
+                    record["ts"] = datetime.now(timezone.utc).isoformat(timespec="microseconds")
                     results.append(record)
 
                     output_path = current_week_file(out_dir_output,format = "jsonl")
@@ -436,7 +437,7 @@ def list_chats():
             if rows:
                 chats.append({"name": name, "last": rows[-1].get("ts", ""),
                               "messages": [{"role": r["role"], "content": r["content"],
-                                            **{k: r[k] for k in SOURCE_KEYS if k in r}}
+                                            **{k: r[k] for k in ("ts", *SOURCE_KEYS) if k in r}}
                                            for r in rows]})
     chats.sort(key=lambda c: c["last"], reverse=True)
     return [{"name": c["name"], "messages": c["messages"]} for c in chats]

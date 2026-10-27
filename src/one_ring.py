@@ -29,7 +29,7 @@ def ring():
             if flag is not False:
                 flag = clean_data(flag)
                 print("Data Cleaned")
-                print("Clean file laoded")
+                print("Clean file loaded")
                 if flag is not False:
                     flag = match_data(flag)
                     print("Match file loaded")
